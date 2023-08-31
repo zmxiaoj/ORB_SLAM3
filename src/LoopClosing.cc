@@ -31,7 +31,10 @@
 
 namespace ORB_SLAM3
 {
-
+/* @brief
+ * @param bFixScale bool 传入参数为 mSensor！=Monocular，判断传感器类型是否为单目相机，进行尺度修正
+ * @param bActiveLC bool 是否启动回环检测
+ */
 LoopClosing::LoopClosing(Atlas *pAtlas, KeyFrameDatabase *pDB, ORBVocabulary *pVoc, const bool bFixScale, const bool bActiveLC):
     mbResetRequested(false), mbResetActiveMapRequested(false), mbFinishRequested(false), mbFinished(true), mpAtlas(pAtlas),
     mpKeyFrameDB(pDB), mpORBVocabulary(pVoc), mpMatchedKF(NULL), mLastLoopKFid(0), mbRunningGBA(false), mbFinishedGBA(true),

@@ -38,12 +38,19 @@ namespace ORB_SLAM3
 
 Verbose::eLevel Verbose::th = Verbose::VERBOSITY_NORMAL;
 
+/* @brief ORBSLAM主类
+ *
+ * @param bUseViewer bool 是否启动可视化
+ * @param sensor enum 选择传感器类型，可优化为enum class
+ */
+
 System::System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor,
                const bool bUseViewer, const int initFr, const string &strSequence):
     mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)), mbReset(false), mbResetActiveMap(false),
     mbActivateLocalizationMode(false), mbDeactivateLocalizationMode(false), mbShutDown(false)
 {
     // Output welcome message
+
     cout << endl <<
     "ORB-SLAM3 Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza." << endl <<
     "ORB-SLAM2 Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza." << endl <<
@@ -76,7 +83,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     cv::FileNode node = fsSettings["File.version"];
     if(!node.empty() && node.isString() && node.string() == "1.0"){
-        settings_ = new Settings(strSettingsFile,mSensor);
+        settings_ = new Settings(strSettingsFile, mSensor);
 
         mStrLoadAtlasFromFile = settings_->atlasLoadFile();
         mStrSaveAtlasToFile = settings_->atlasSaveFile();
@@ -99,6 +106,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     }
 
     node = fsSettings["loopClosing"];
+	// 默认启动回环检测
     bool activeLC = true;
     if(!node.empty())
     {
@@ -128,6 +136,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         mpKeyFrameDatabase = new KeyFrameDatabase(*mpVocabulary);
 
         //Create the Atlas
+		// Atlas保存地图、帧
         cout << "Initialization of Atlas from scratch " << endl;
         mpAtlas = new Atlas(0);
     }
@@ -185,18 +194,24 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     mpFrameDrawer = new FrameDrawer(mpAtlas);
     mpMapDrawer = new MapDrawer(mpAtlas, strSettingsFile, settings_);
 
-    //Initialize the Tracking thread
+    // 1.Initialize the Tracking thread
+	// 完成线程初始化但未启动，调用SLAM.TrackMonocular()启动
     //(it will live in the main thread of execution, the one that called this constructor)
     cout << "Seq. Name: " << strSequence << endl;
     mpTracker = new Tracking(this, mpVocabulary, mpFrameDrawer, mpMapDrawer,
                              mpAtlas, mpKeyFrameDatabase, strSettingsFile, mSensor, settings_, strSequence);
 
-    //Initialize the Local Mapping thread and launch
+    // 2.Initialize the Local Mapping thread and launch
     mpLocalMapper = new LocalMapping(this, mpAtlas, mSensor==MONOCULAR || mSensor==IMU_MONOCULAR,
                                      mSensor==IMU_MONOCULAR || mSensor==IMU_STEREO || mSensor==IMU_RGBD, strSequence);
-    mptLocalMapping = new thread(&ORB_SLAM3::LocalMapping::Run,mpLocalMapper);
-    mpLocalMapper->mInitFr = initFr;
-    if(settings_)
+    // 启动LocalMapping线程，mpLocalMapper作为参数传入
+	mptLocalMapping = new thread(&ORB_SLAM3::LocalMapping::Run,mpLocalMapper);
+
+	// debug用参数
+	mpLocalMapper->mInitFr = initFr;
+
+	// 设置远点阈值
+	if(settings_)
         mpLocalMapper->mThFarPoints = settings_->thFarPoints();
     else
         mpLocalMapper->mThFarPoints = fsSettings["thFarPoints"];
@@ -208,10 +223,11 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     else
         mpLocalMapper->mbFarPoints = false;
 
-    //Initialize the Loop Closing thread and launch
+    // 3.Initialize the Loop Closing thread and launch
     // mSensor!=MONOCULAR && mSensor!=IMU_MONOCULAR
     mpLoopCloser = new LoopClosing(mpAtlas, mpKeyFrameDatabase, mpVocabulary, mSensor!=MONOCULAR, activeLC); // mSensor!=MONOCULAR);
-    mptLoopClosing = new thread(&ORB_SLAM3::LoopClosing::Run, mpLoopCloser);
+    // 启动回环检测线程
+	mptLoopClosing = new thread(&ORB_SLAM3::LoopClosing::Run, mpLoopCloser);
 
     //Set pointers between threads
     mpTracker->SetLocalMapper(mpLocalMapper);
@@ -225,19 +241,24 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     //usleep(10*1000*1000);
 
-    //Initialize the Viewer thread and launch
+    // 4.Initialize the Viewer thread and launch
     if(bUseViewer)
     //if(false) // TODO
     {
+
         mpViewer = new Viewer(this, mpFrameDrawer,mpMapDrawer,mpTracker,strSettingsFile,settings_);
-        mptViewer = new thread(&Viewer::Run, mpViewer);
+        // 启动Pangolin可视化线程
+		mptViewer = new thread(&Viewer::Run, mpViewer);
+		// 设定线程间参数
         mpTracker->SetViewer(mpViewer);
         mpLoopCloser->mpViewer = mpViewer;
         mpViewer->both = mpFrameDrawer->both;
     }
 
     // Fix verbosity
-    Verbose::SetTh(Verbose::VERBOSITY_QUIET);
+    // Verbose::SetTh(Verbose::VERBOSITY_QUIET);
+	// 输出图像跟踪状态
+	Verbose::SetTh(Verbose::VERBOSITY_DEBUG);
 
 }
 
@@ -881,7 +902,7 @@ void System::SaveTrajectoryEuRoC(const string &filename, Map* pMap)
     cout << endl << "End of saving trajectory to " << filename << " ..." << endl;
 }
 
-/*void System::SaveTrajectoryEuRoC(const string &filename)
+/*void System::SaveTrajectoryEuRoC_old(const string &filename)
 {
 
     cout << endl << "Saving trajectory to " << filename << " ..." << endl;
@@ -1150,7 +1171,7 @@ void System::SaveKeyFrameTrajectoryEuRoC(const string &filename, Map* pMap)
     f.close();
 }
 
-/*void System::SaveTrajectoryKITTI(const string &filename)
+/*void System::SaveTrajectoryKITTI_old(const string &filename)
 {
     cout << endl << "Saving camera trajectory to " << filename << " ..." << endl;
     if(mSensor==MONOCULAR)
@@ -1261,7 +1282,7 @@ void System::SaveTrajectoryKITTI(const string &filename)
     f.close();
 }
 
-
+// 保存Debug信息
 void System::SaveDebugData(const int &initIdx)
 {
     // 0. Save initialization trajectory

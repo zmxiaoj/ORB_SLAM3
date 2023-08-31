@@ -81,7 +81,8 @@ int main(int argc, char **argv)
 	int fps = 20;
 	float dT = 1.f/fps;
 	// Create SLAM system. It initializes all system threads and gets ready to process frames.
-	ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::MONOCULAR, false);
+	ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::MONOCULAR, true);
+	// ORB_SLAM3::System SLAM(argv[1],argv[2],ORB_SLAM3::System::MONOCULAR, false);
 	float imageScale = SLAM.GetImageScale();
 
 	double t_resize = 0.f;
@@ -167,9 +168,9 @@ int main(int argc, char **argv)
 			//std::cout << "T: " << T << std::endl;
 			//std::cout << "ttrack: " << ttrack << std::endl;
 
-			if(ttrack<T) {
+			if(ttrack < T) {
 				//std::cout << "usleep: " << (dT-ttrack) << std::endl;
-				usleep((T-ttrack)*1e6); // 1e6
+				usleep((T - ttrack) * 1e6); // 1e6
 			}
 		}
 

@@ -58,7 +58,7 @@ void LocalMapping::SetLoopCloser(LoopClosing* pLoopCloser)
 
 void LocalMapping::SetTracker(Tracking *pTracker)
 {
-    mpTracker=pTracker;
+    mpTracker = pTracker;
 }
 
 void LocalMapping::Run()

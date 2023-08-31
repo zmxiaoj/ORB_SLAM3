@@ -546,6 +546,7 @@ void Tracking::newParameterLoader(Settings *settings) {
     //TODO: missing image scaling and rectification
     mImageScale = 1.0f;
 
+    // mK is cv::Mat mK_ is Eigen::Matirx3f
     mK = cv::Mat::eye(3,3,CV_32F);
     mK.at<float>(0,0) = mpCamera->getParameter(0);
     mK.at<float>(1,1) = mpCamera->getParameter(1);
