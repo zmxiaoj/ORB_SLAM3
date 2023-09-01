@@ -1567,6 +1567,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
 Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)
 {
     mImGray = im;
+	// 判断图像通道数处理为灰度图
     if(mImGray.channels()==3)
     {
         if(mbRGB)
@@ -1584,9 +1585,11 @@ Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &times
 
     if (mSensor == System::MONOCULAR)
     {
+		// 初始化
         if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET ||(lastID - initID) < mMaxFrames)
             mCurrentFrame = Frame(mImGray,timestamp,mpIniORBextractor,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth);
-        else
+        //  正常提取
+		else
             mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth);
     }
     else if(mSensor == System::IMU_MONOCULAR)

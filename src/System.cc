@@ -419,7 +419,7 @@ Sophus::SE3f System::TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, const
 
 Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, const vector<IMU::Point>& vImuMeas, string filename)
 {
-
+	// 只在{}作用域内具有mMutexReset权限，保证在作用域内安全
     {
         unique_lock<mutex> lock(mMutexReset);
         if(mbShutDown)
@@ -451,7 +451,7 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
             {
                 usleep(1000);
             }
-
+			// 只进行localization模式
             mpTracker->InformOnlyTracking(true);
             mbActivateLocalizationMode = false;
         }

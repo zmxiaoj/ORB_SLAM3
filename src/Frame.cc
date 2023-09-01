@@ -97,7 +97,7 @@ Frame::Frame(const Frame &frame)
 #endif
 }
 
-
+// 双目
 Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeStamp, ORBextractor* extractorLeft, ORBextractor* extractorRight, ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera, Frame* pPrevF, const IMU::Calib &ImuCalib)
     :mpcpi(NULL), mpORBvocabulary(voc),mpORBextractorLeft(extractorLeft),mpORBextractorRight(extractorRight), mTimeStamp(timeStamp), mK(K.clone()), mK_(Converter::toMatrix3f(K)), mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
      mImuCalib(ImuCalib), mpImuPreintegrated(NULL), mpPrevFrame(pPrevF),mpImuPreintegratedFrame(NULL), mpReferenceKF(static_cast<KeyFrame*>(NULL)), mbIsSet(false), mbImuPreintegrated(false),
@@ -197,6 +197,7 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     AssignFeaturesToGrid();
 }
 
+// RGBD
 Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera,Frame* pPrevF, const IMU::Calib &ImuCalib)
     :mpcpi(NULL),mpORBvocabulary(voc),mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(K.clone()), mK_(Converter::toMatrix3f(K)),mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
@@ -285,7 +286,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     AssignFeaturesToGrid();
 }
 
-
+// 单目
 Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, GeometricCamera* pCamera, cv::Mat &distCoef, const float &bf, const float &thDepth, Frame* pPrevF, const IMU::Calib &ImuCalib)
     :mpcpi(NULL),mpORBvocabulary(voc),mpORBextractorLeft(extractor),mpORBextractorRight(static_cast<ORBextractor*>(NULL)),
      mTimeStamp(timeStamp), mK(static_cast<Pinhole*>(pCamera)->toK()), mK_(static_cast<Pinhole*>(pCamera)->toK_()), mDistCoef(distCoef.clone()), mbf(bf), mThDepth(thDepth),
@@ -364,10 +365,12 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     monoLeft = -1;
     monoRight = -1;
 
+	// 特征点均匀化
     AssignFeaturesToGrid();
 
+	// 存在前一帧
     if(pPrevF)
-    {
+    {   // 2023.09.01
         if(pPrevF->HasVelocity())
         {
             SetVelocity(pPrevF->GetVelocity());
@@ -779,8 +782,10 @@ void Frame::UndistortKeyPoints()
 
 }
 
+// 确定图像的边界
 void Frame::ComputeImageBounds(const cv::Mat &imLeft)
 {
+	// 图像存在畸变
     if(mDistCoef.at<float>(0)!=0.0)
     {
         cv::Mat mat(4,2,CV_32F);
@@ -789,9 +794,11 @@ void Frame::ComputeImageBounds(const cv::Mat &imLeft)
         mat.at<float>(2,0)=0.0; mat.at<float>(2,1)=imLeft.rows;
         mat.at<float>(3,0)=imLeft.cols; mat.at<float>(3,1)=imLeft.rows;
 
+		//
         mat=mat.reshape(2);
         cv::undistortPoints(mat,mat,static_cast<Pinhole*>(mpCamera)->toK(),mDistCoef,cv::Mat(),mK);
-        mat=mat.reshape(1);
+        //
+		mat=mat.reshape(1);
 
         // Undistort corners
         mnMinX = min(mat.at<float>(0,0),mat.at<float>(2,0));
@@ -799,6 +806,7 @@ void Frame::ComputeImageBounds(const cv::Mat &imLeft)
         mnMinY = min(mat.at<float>(0,1),mat.at<float>(1,1));
         mnMaxY = max(mat.at<float>(2,1),mat.at<float>(3,1));
     }
+	// 图像无畸变
     else
     {
         mnMinX = 0.0f;
