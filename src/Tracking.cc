@@ -1585,6 +1585,7 @@ Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &times
 
     if (mSensor == System::MONOCULAR)
     {
+		// 对每一frame处理，提取关键帧，设置初始速度
 		// 初始化
         if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET ||(lastID - initID) < mMaxFrames)
             mCurrentFrame = Frame(mImGray,timestamp,mpIniORBextractor,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth);
@@ -1611,8 +1612,9 @@ Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &times
 #ifdef REGISTER_TIMES
     vdORBExtract_ms.push_back(mCurrentFrame.mTimeORB_Ext);
 #endif
-
+	// 更新frame id
     lastID = mCurrentFrame.mnId;
+	// 进行跟踪
     Track();
 
     return mCurrentFrame.GetPose();
@@ -1797,7 +1799,7 @@ void Tracking::ResetFrameIMU()
 
 void Tracking::Track()
 {
-
+	// 步进式
     if (bStepByStep)
     {
         std::cout << "Tracking: Waiting to the next step" << std::endl;
@@ -1819,8 +1821,10 @@ void Tracking::Track()
         cout << "ERROR: There is not an active map in the atlas" << endl;
     }
 
+	// 不是无图像状态
     if(mState!=NO_IMAGES_YET)
     {
+		// 当前帧时间戳小于前一帧
         if(mLastFrame.mTimeStamp>mCurrentFrame.mTimeStamp)
         {
             cerr << "ERROR: Frame with a timestamp older than previous frame detected!" << endl;
@@ -1829,6 +1833,7 @@ void Tracking::Track()
             CreateMapInAtlas();
             return;
         }
+		// 相邻帧间差1s
         else if(mCurrentFrame.mTimeStamp>mLastFrame.mTimeStamp+1.0)
         {
             // cout << mCurrentFrame.mTimeStamp << ", " << mLastFrame.mTimeStamp << endl;
@@ -1899,7 +1904,7 @@ void Tracking::Track()
         mbMapUpdated = true;
     }
 
-
+	// 初始化未完成
     if(mState==NOT_INITIALIZED)
     {
         if(mSensor==System::STEREO || mSensor==System::RGBD || mSensor==System::IMU_STEREO || mSensor==System::IMU_RGBD)
@@ -1908,6 +1913,7 @@ void Tracking::Track()
         }
         else
         {
+			// 单目初始化
             MonocularInitialization();
         }
 
@@ -1918,13 +1924,14 @@ void Tracking::Track()
             mLastFrame = Frame(mCurrentFrame);
             return;
         }
-
+		// 初始化地图信息
         if(mpAtlas->GetAllMaps().size() == 1)
         {
             mnFirstFrameId = mCurrentFrame.mnId;
         }
     }
-    else
+    // 已初始化
+	else
     {
         // System is initialized. Track Frame.
         bool bOK;
@@ -2451,7 +2458,7 @@ void Tracking::StereoInitialization()
 
 void Tracking::MonocularInitialization()
 {
-
+	//  未准备好初始化
     if(!mbReadyToInitializate)
     {
         // Set Reference Frame
@@ -2477,13 +2484,16 @@ void Tracking::MonocularInitialization()
 
             }
 
+			// 更新准备初始化状态
             mbReadyToInitializate = true;
 
             return;
         }
     }
-    else
+    // 准备好初始化
+	else
     {
+		// 如果关键点小于100 或 (IMU+Mono 且 上一帧与参考帧间相差) 未准备好初始化
         if (((int)mCurrentFrame.mvKeys.size()<=100)||((mSensor == System::IMU_MONOCULAR)&&(mLastFrame.mTimeStamp-mInitialFrame.mTimeStamp>1.0)))
         {
             mbReadyToInitializate = false;
@@ -2492,10 +2502,12 @@ void Tracking::MonocularInitialization()
         }
 
         // Find correspondences
+		// 关键点匹配
         ORBmatcher matcher(0.9,true);
         int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
         // Check if there are enough correspondences
+		// 检测是否存在足够多匹配
         if(nmatches<100)
         {
             mbReadyToInitializate = false;
@@ -2505,6 +2517,7 @@ void Tracking::MonocularInitialization()
         Sophus::SE3f Tcw;
         vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
+		// 双视图三角化
         if(mpCamera->ReconstructWithTwoViews(mInitialFrame.mvKeysUn,mCurrentFrame.mvKeysUn,mvIniMatches,Tcw,mvIniP3D,vbTriangulated))
         {
             for(size_t i=0, iend=mvIniMatches.size(); i<iend;i++)
@@ -2520,6 +2533,7 @@ void Tracking::MonocularInitialization()
             mInitialFrame.SetPose(Sophus::SE3f());
             mCurrentFrame.SetPose(Tcw);
 
+			// 创建初始单目地图
             CreateInitialMapMonocular();
         }
     }
@@ -3456,7 +3470,6 @@ void Tracking::UpdateLocalPoints()
         }
     }
 }
-
 
 void Tracking::UpdateLocalKeyFrames()
 {

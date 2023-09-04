@@ -54,6 +54,7 @@ namespace ORB_SLAM3
         mvbMatched1.resize(mvKeys1.size());
         for(size_t i=0, iend=vMatches12.size();i<iend; i++)
         {
+			// 匹配成功保存并标记
             if(vMatches12[i]>=0)
             {
                 mvMatches12.push_back(make_pair(i,vMatches12[i]));
@@ -87,11 +88,14 @@ namespace ORB_SLAM3
             // Select a minimum set
             for(size_t j=0; j<8; j++)
             {
+				// 随意选择一个索引
                 int randi = DUtils::Random::RandomInt(0,vAvailableIndices.size()-1);
                 int idx = vAvailableIndices[randi];
 
                 mvSets[it][j] = idx;
 
+				// 将已选择的索引替换为最后一个元素，并删除最后一个元素
+				// 等价于删除本次选择的索引
                 vAvailableIndices[randi] = vAvailableIndices.back();
                 vAvailableIndices.pop_back();
             }
@@ -102,6 +106,7 @@ namespace ORB_SLAM3
         float SH, SF;
         Eigen::Matrix3f H, F;
 
+		// ref()将参数以引用形式传递给目标函数
         thread threadH(&TwoViewReconstruction::FindHomography,this,ref(vbMatchesInliersH), ref(SH), ref(H));
         thread threadF(&TwoViewReconstruction::FindFundamental,this,ref(vbMatchesInliersF), ref(SF), ref(F));
 
@@ -116,7 +121,8 @@ namespace ORB_SLAM3
         float minParallax = 1.0;
 
         // Try to reconstruct from homography or fundamental depending on the ratio (0.40-0.45)
-        if(RH>0.50) // if(RH>0.40)
+        // 根据得分选择初始化用的矩阵 H/F
+		if(RH>0.50) // if(RH>0.40)
         {
             //cout << "Initialization from Homography" << endl;
             return ReconstructH(vbMatchesInliersH,H, mK,T21,vP3D,vbTriangulated,minParallax,50);
@@ -155,6 +161,7 @@ namespace ORB_SLAM3
         for(int it=0; it<mMaxIterations; it++)
         {
             // Select a minimum set
+			// 使用之前生成的索引选择匹配点
             for(size_t j=0; j<8; j++)
             {
                 int idx = mvSets[it][j];
@@ -231,6 +238,7 @@ namespace ORB_SLAM3
 
     Eigen::Matrix3f TwoViewReconstruction::ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2)
     {
+		// N = 8
         const int N = vP1.size();
 
         Eigen::MatrixXf A(2*N, 9);

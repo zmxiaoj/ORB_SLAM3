@@ -373,6 +373,7 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     {   // 2023.09.01
         if(pPrevF->HasVelocity())
         {
+			// 根据前一帧速度进行预测
             SetVelocity(pPrevF->GetVelocity());
         }
     }
@@ -390,8 +391,11 @@ void Frame::AssignFeaturesToGrid()
     // Fill matrix with points
     const int nCells = FRAME_GRID_COLS*FRAME_GRID_ROWS;
 
+	// N为特征点数目
+	// 将特征点按照网格数均分
     int nReserve = 0.5f*N/(nCells);
 
+	// 遍历网格预存空间
     for(unsigned int i=0; i<FRAME_GRID_COLS;i++)
         for (unsigned int j=0; j<FRAME_GRID_ROWS;j++){
             mGrid[i][j].reserve(nReserve);
@@ -404,12 +408,15 @@ void Frame::AssignFeaturesToGrid()
 
     for(int i=0;i<N;i++)
     {
+		// 逻辑左到右判断是否存在右目图像
         const cv::KeyPoint &kp = (Nleft == -1) ? mvKeysUn[i]
                                                  : (i < Nleft) ? mvKeys[i]
                                                                  : mvKeysRight[i - Nleft];
 
         int nGridPosX, nGridPosY;
+		// 判断关键点是否在网格中
         if(PosInGrid(kp,nGridPosX,nGridPosY)){
+			// 将关键点索引加入特定网格
             if(Nleft == -1 || i < Nleft)
                 mGrid[nGridPosX][nGridPosY].push_back(i);
             else
