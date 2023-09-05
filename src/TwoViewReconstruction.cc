@@ -271,9 +271,9 @@ namespace ORB_SLAM3
             A(2*i+1,8) = -u2;
 
         }
-
+		// 对A进行SVD分解
         Eigen::JacobiSVD<Eigen::MatrixXf> svd(A, Eigen::ComputeFullV);
-
+		// 取出A^T*A最小特征向量 V的第9个列向量
         Eigen::Matrix<float,3,3,Eigen::RowMajor> H(svd.matrixV().col(8).data());
 
         return H;
@@ -343,6 +343,7 @@ namespace ORB_SLAM3
 
         float score = 0;
 
+		// 自由度为2的卡方分布显著性水平为0.05对应的临界阈值
         const float th = 5.991;
 
         const float invSigmaSquare = 1.0/(sigma*sigma);
@@ -741,7 +742,10 @@ namespace ORB_SLAM3
         return false;
     }
 
-
+	/*
+	 * @brief 对特征点归一化
+	 *
+	 */
     void TwoViewReconstruction::Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, Eigen::Matrix3f &T)
     {
         float meanX = 0;
@@ -755,7 +759,7 @@ namespace ORB_SLAM3
             meanX += vKeys[i].pt.x;
             meanY += vKeys[i].pt.y;
         }
-
+		// 计算全部特征点X，Y坐标的均值
         meanX = meanX/N;
         meanY = meanY/N;
 
@@ -770,19 +774,19 @@ namespace ORB_SLAM3
             meanDevX += fabs(vNormalizedPoints[i].x);
             meanDevY += fabs(vNormalizedPoints[i].y);
         }
-
+		// 计算全部特征点偏离X，Y坐标的均值
         meanDevX = meanDevX/N;
         meanDevY = meanDevY/N;
-
+		// 将偏离的均值倒数作为系数
         float sX = 1.0/meanDevX;
         float sY = 1.0/meanDevY;
-
+		// 对每个特征点的偏离值进行归一化
         for(int i=0; i<N; i++)
         {
             vNormalizedPoints[i].x = vNormalizedPoints[i].x * sX;
             vNormalizedPoints[i].y = vNormalizedPoints[i].y * sY;
         }
-
+		// 将变换关系表示为矩阵
         T.setZero();
         T(0,0) = sX;
         T(1,1) = sY;
