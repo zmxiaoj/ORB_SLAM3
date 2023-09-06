@@ -171,7 +171,8 @@ namespace ORB_SLAM3
             }
 
             Eigen::Matrix3f Hn = ComputeH21(vPn1i,vPn2i);
-            H21i = T2inv * Hn * T1;
+            // 转换为空间点对应的H
+			H21i = T2inv * Hn * T1;
             H12i = H21i.inverse();
 
             currentScore = CheckHomography(H21i, H12i, vbCurrentInliers, mSigma);
@@ -223,10 +224,11 @@ namespace ORB_SLAM3
 
             Eigen::Matrix3f Fn = ComputeF21(vPn1i,vPn2i);
 
+			// 转换为空间点对应的F
             F21i = T2t * Fn * T1;
 
             currentScore = CheckFundamental(F21i, vbCurrentInliers, mSigma);
-
+			// 选择得分最高解
             if(currentScore>score)
             {
                 F21 = F21i;
@@ -240,7 +242,7 @@ namespace ORB_SLAM3
     {
 		// N = 8
         const int N = vP1.size();
-
+		// A_16x9
         Eigen::MatrixXf A(2*N, 9);
 
         for(int i=0; i<N; i++)
@@ -274,6 +276,7 @@ namespace ORB_SLAM3
 		// 对A进行SVD分解
         Eigen::JacobiSVD<Eigen::MatrixXf> svd(A, Eigen::ComputeFullV);
 		// 取出A^T*A最小特征向量 V的第9个列向量
+		// 整理为3*3的单应矩阵H
         Eigen::Matrix<float,3,3,Eigen::RowMajor> H(svd.matrixV().col(8).data());
 
         return H;
@@ -281,8 +284,9 @@ namespace ORB_SLAM3
 
     Eigen::Matrix3f TwoViewReconstruction::ComputeF21(const vector<cv::Point2f> &vP1,const vector<cv::Point2f> &vP2)
     {
+		// N = 8
         const int N = vP1.size();
-
+		// A_8x9
         Eigen::MatrixXf A(N, 9);
 
         for(int i=0; i<N; i++)
@@ -304,9 +308,10 @@ namespace ORB_SLAM3
         }
 
         Eigen::JacobiSVD<Eigen::MatrixXf> svd(A, Eigen::ComputeFullU | Eigen::ComputeFullV);
-
+		// 得到V的第9个列向量作为Fpre_3x3
         Eigen::Matrix<float,3,3,Eigen::RowMajor> Fpre(svd.matrixV().col(8).data());
-
+		// 保证F秩为2
+		// 对Fpre进行SVD分解，令第3个奇异值为0，保留U，V
         Eigen::JacobiSVD<Eigen::Matrix3f> svd2(Fpre, Eigen::ComputeFullU | Eigen::ComputeFullV);
 
         Eigen::Vector3f w = svd2.singularValues();
@@ -368,12 +373,13 @@ namespace ORB_SLAM3
             const float v2in1 = (h21inv*u2+h22inv*v2+h23inv)*w2in1inv;
 
             const float squareDist1 = (u1-u2in1)*(u1-u2in1)+(v1-v2in1)*(v1-v2in1);
-
+			// 卡方统计量
             const float chiSquare1 = squareDist1*invSigmaSquare;
 
             if(chiSquare1>th)
                 bIn = false;
             else
+				// 相差阈值越大，得分越高
                 score += th - chiSquare1;
 
             // Reprojection error in second image
@@ -418,8 +424,9 @@ namespace ORB_SLAM3
         vbMatchesInliers.resize(N);
 
         float score = 0;
-
+		// 自由度1的卡方分布在显著性水平为0.05对应的阈值
         const float th = 3.841;
+	    // 自由度2的卡方分布在显著性水平为0.05对应的阈值
         const float thScore = 5.991;
 
         const float invSigmaSquare = 1.0/(sigma*sigma);
@@ -442,9 +449,9 @@ namespace ORB_SLAM3
             const float a2 = f11*u1+f12*v1+f13;
             const float b2 = f21*u1+f22*v1+f23;
             const float c2 = f31*u1+f32*v1+f33;
-
+            // p2^T*l2
             const float num2 = a2*u2+b2*v2+c2;
-
+			// 定义误差e
             const float squareDist1 = num2*num2/(a2*a2+b2*b2);
 
             const float chiSquare1 = squareDist1*invSigmaSquare;
@@ -460,7 +467,7 @@ namespace ORB_SLAM3
             const float a1 = f11*u2+f21*v2+f31;
             const float b1 = f12*u2+f22*v2+f32;
             const float c1 = f13*u2+f23*v2+f33;
-
+			// l1*p1
             const float num1 = a1*u1+b1*v1+c1;
 
             const float squareDist2 = num1*num1/(a1*a1+b1*b1);
@@ -485,11 +492,13 @@ namespace ORB_SLAM3
                                              Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
     {
         int N=0;
+		// 统计内点匹配
         for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
             if(vbMatchesInliers[i])
                 N++;
 
         // Compute Essential Matrix from Fundamental Matrix
+		// 从F计算E
         Eigen::Matrix3f E21 = K.transpose() * F21 * K;
 
         Eigen::Matrix3f R1, R2;
@@ -503,8 +512,8 @@ namespace ORB_SLAM3
 
         // Reconstruct with the 4 hyphoteses and check
         vector<cv::Point3f> vP3D1, vP3D2, vP3D3, vP3D4;
-        vector<bool> vbTriangulated1,vbTriangulated2,vbTriangulated3, vbTriangulated4;
-        float parallax1,parallax2, parallax3, parallax4;
+        vector<bool> vbTriangulated1, vbTriangulated2, vbTriangulated3, vbTriangulated4;
+        float parallax1, parallax2, parallax3, parallax4;
 
         int nGood1 = CheckRT(R1,t1,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D1, 4.0*mSigma2, vbTriangulated1, parallax1);
         int nGood2 = CheckRT(R2,t1,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D2, 4.0*mSigma2, vbTriangulated2, parallax2);
@@ -744,7 +753,6 @@ namespace ORB_SLAM3
 
 	/*
 	 * @brief 对特征点归一化
-	 *
 	 */
     void TwoViewReconstruction::Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, Eigen::Matrix3f &T)
     {
@@ -794,7 +802,9 @@ namespace ORB_SLAM3
         T(1,2) = -meanY*sY;
         T(2,2) = 1.f;
     }
-
+	/*
+	 * @brief 进行cheirality check，验证R t
+	 */
     int TwoViewReconstruction::CheckRT(const Eigen::Matrix3f &R, const Eigen::Vector3f &t, const vector<cv::KeyPoint> &vKeys1, const vector<cv::KeyPoint> &vKeys2,
                                        const vector<Match> &vMatches12, vector<bool> &vbMatchesInliers,
                                        const Eigen::Matrix3f &K, vector<cv::Point3f> &vP3D, float th2, vector<bool> &vbGood, float &parallax)
