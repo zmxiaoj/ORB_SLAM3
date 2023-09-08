@@ -171,7 +171,13 @@ namespace ORB_SLAM3
             }
 
             Eigen::Matrix3f Hn = ComputeH21(vPn1i,vPn2i);
-            // 转换为空间点对应的H
+
+	        // p'_2 p'_1为归一化后的点 p'_2 = T_2 * p_2 p'_1 = T_1 * p_1
+	        // H'_21 为归一化后的点对应H
+	        // p_2 = H_21 * p_1
+			// T_2 * p_2 = T_2 * H_21 * T_1^-1 * T_1 * p_1
+			// p'_2 = H'_21 * p'_1
+			// H_21 = T_2^-1 * H'_21 * T_1
 			H21i = T2inv * Hn * T1;
             H12i = H21i.inverse();
 
@@ -185,7 +191,6 @@ namespace ORB_SLAM3
             }
         }
     }
-
 
     void TwoViewReconstruction::FindFundamental(vector<bool> &vbMatchesInliers, float &score, Eigen::Matrix3f &F21)
     {
@@ -224,7 +229,11 @@ namespace ORB_SLAM3
 
             Eigen::Matrix3f Fn = ComputeF21(vPn1i,vPn2i);
 
-			// 转换为空间点对应的F
+			// p'_2 p'_1为归一化后的点 p'_2 = T_2 * p_2 p'_1 = T_1 * p_1
+			// F'_21 为归一化后的点对应F
+			// p'_2^T * F'_21 * p'_1 = 0
+			// p_2^T * T_2^T * F'_21 * T_1 * p_1 = 0
+			// F_21 = T_2^T * F'_21 * T_1
             F21i = T2t * Fn * T1;
 
             currentScore = CheckFundamental(F21i, vbCurrentInliers, mSigma);
@@ -498,15 +507,16 @@ namespace ORB_SLAM3
                 N++;
 
         // Compute Essential Matrix from Fundamental Matrix
-		// 从F计算E
+		// 从F计算E F = K^-T * E * K^-1
         Eigen::Matrix3f E21 = K.transpose() * F21 * K;
 
         Eigen::Matrix3f R1, R2;
         Eigen::Vector3f t;
 
         // Recover the 4 motion hypotheses
+		// 分解E，得到四种运动假设
         DecomposeE(E21,R1,R2,t);
-
+		// t 2 种 R 2 种
         Eigen::Vector3f t1 = t;
         Eigen::Vector3f t2 = -t;
 
@@ -519,9 +529,9 @@ namespace ORB_SLAM3
         int nGood2 = CheckRT(R2,t1,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D2, 4.0*mSigma2, vbTriangulated2, parallax2);
         int nGood3 = CheckRT(R1,t2,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D3, 4.0*mSigma2, vbTriangulated3, parallax3);
         int nGood4 = CheckRT(R2,t2,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D4, 4.0*mSigma2, vbTriangulated4, parallax4);
-
+		// 取最高得分
         int maxGood = max(nGood1,max(nGood2,max(nGood3,nGood4)));
-
+		// 计算最低得分阈值
         int nMinGood = max(static_cast<int>(0.9*N),minTriangulated);
 
         int nsimilar = 0;
@@ -535,12 +545,14 @@ namespace ORB_SLAM3
             nsimilar++;
 
         // If there is not a clear winner or not enough triangulated points reject initialization
+		// 没得到可靠分解
         if(maxGood<nMinGood || nsimilar>1)
         {
             return false;
         }
 
         // If best reconstruction has enough parallax initialize
+		// 对于得分最高的分解，检验视差是否合格
         if(maxGood==nGood1)
         {
             if(parallax1>minParallax)
@@ -551,7 +563,8 @@ namespace ORB_SLAM3
                 T21 = Sophus::SE3f(R1, t1);
                 return true;
             }
-        }else if(maxGood==nGood2)
+        }
+		else if(maxGood==nGood2)
         {
             if(parallax2>minParallax)
             {
@@ -561,7 +574,8 @@ namespace ORB_SLAM3
                 T21 = Sophus::SE3f(R2, t1);
                 return true;
             }
-        }else if(maxGood==nGood3)
+        }
+		else if(maxGood==nGood3)
         {
             if(parallax3>minParallax)
             {
@@ -571,7 +585,8 @@ namespace ORB_SLAM3
                 T21 = Sophus::SE3f(R1, t2);
                 return true;
             }
-        }else if(maxGood==nGood4)
+        }
+		else if(maxGood==nGood4)
         {
             if(parallax4>minParallax)
             {
@@ -589,6 +604,7 @@ namespace ORB_SLAM3
     bool TwoViewReconstruction::ReconstructH(vector<bool> &vbMatchesInliers, Eigen::Matrix3f &H21, Eigen::Matrix3f &K,
                                              Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
     {
+		// 统计合法匹配
         int N=0;
         for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
             if(vbMatchesInliers[i])
@@ -597,9 +613,12 @@ namespace ORB_SLAM3
         // We recover 8 motion hypotheses using the method of Faugeras et al.
         // Motion and structure from motion in a piecewise planar environment.
         // International Journal of Pattern Recognition and Artificial Intelligence, 1988
+		// 恢复8种运动假设
         Eigen::Matrix3f invK = K.inverse();
+		// H_21描述特征点之间的变换关系 p_2 = H_21 * p_1
+		// 转换到归一化相机坐标系下有 P_2 = K^-1 * H_21 * K * P_1
         Eigen::Matrix3f A = invK * H21 * K;
-
+		// 对A进行SVD分解
         Eigen::JacobiSVD<Eigen::Matrix3f> svd(A, Eigen::ComputeFullU | Eigen::ComputeFullV);
         Eigen::Matrix3f U = svd.matrixU();
         Eigen::Matrix3f V = svd.matrixV();
@@ -607,11 +626,11 @@ namespace ORB_SLAM3
         Eigen::Vector3f w = svd.singularValues();
 
         float s = U.determinant() * Vt.determinant();
-
+		// 取出3个奇异值
         float d1 = w(0);
         float d2 = w(1);
         float d3 = w(2);
-
+		// 正常情况奇异值结果降序排列，反常情况分解失败
         if(d1/d2<1.00001 || d2/d3<1.00001)
         {
             return false;
@@ -753,6 +772,9 @@ namespace ORB_SLAM3
 
 	/*
 	 * @brief 对特征点归一化
+	 * @param[in] vKeys 待归一化的特征点像素坐标
+	 * @param[out] vNormalizedPoints 归一化后的特征点像素坐标
+	 * @param[out] T 待归一化->归一化的变换矩阵
 	 */
     void TwoViewReconstruction::Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, Eigen::Matrix3f &T)
     {
@@ -814,10 +836,10 @@ namespace ORB_SLAM3
         const float fy = K(1,1);
         const float cx = K(0,2);
         const float cy = K(1,2);
-
+		// 初始化特征点合格标记
         vbGood = vector<bool>(vKeys1.size(),false);
         vP3D.resize(vKeys1.size());
-
+		// 初始化特征点对解算视差
         vector<float> vCosParallax;
         vCosParallax.reserve(vKeys1.size());
 
@@ -825,7 +847,7 @@ namespace ORB_SLAM3
         Eigen::Matrix<float,3,4> P1;
         P1.setZero();
         P1.block<3,3>(0,0) = K;
-
+		// 相机光心O1在世界坐标系下的坐标
         Eigen::Vector3f O1;
         O1.setZero();
 
@@ -834,26 +856,29 @@ namespace ORB_SLAM3
         P2.block<3,3>(0,0) = R;
         P2.block<3,1>(0,3) = t;
         P2 = K * P2;
-
+		// [R|t] 求逆
+		// 相机光心O2在世界坐标系下的坐标
         Eigen::Vector3f O2 = -R.transpose() * t;
-
+		// 初始化合格点数
         int nGood=0;
-
+		// 遍历特征点对
         for(size_t i=0, iend=vMatches12.size();i<iend;i++)
         {
+			// 忽略外点
             if(!vbMatchesInliers[i])
                 continue;
 
             const cv::KeyPoint &kp1 = vKeys1[vMatches12[i].first];
             const cv::KeyPoint &kp2 = vKeys2[vMatches12[i].second];
-
+			// 三维空间点坐标
             Eigen::Vector3f p3dC1;
+			// 转换为齐次坐标
             Eigen::Vector3f x_p1(kp1.pt.x, kp1.pt.y, 1);
             Eigen::Vector3f x_p2(kp2.pt.x, kp2.pt.y, 1);
-
+			// 三角化
             GeometricTools::Triangulate(x_p1, x_p2, P1, P2, p3dC1);
 
-
+			// 1.验证三维空间点xyz是否有限(存在无穷点)，若无限说明三角化失败
             if(!isfinite(p3dC1(0)) || !isfinite(p3dC1(1)) || !isfinite(p3dC1(2)))
             {
                 vbGood[vMatches12[i].first]=false;
@@ -861,58 +886,68 @@ namespace ORB_SLAM3
             }
 
             // Check parallax
+			// 2.检验视差
             Eigen::Vector3f normal1 = p3dC1 - O1;
+			// 求模长
             float dist1 = normal1.norm();
 
             Eigen::Vector3f normal2 = p3dC1 - O2;
             float dist2 = normal2.norm();
-
+			// 计算向量O_1P O_2P的夹角余弦
             float cosParallax = normal1.dot(normal2) / (dist1*dist2);
 
             // Check depth in front of first camera (only if enough parallax, as "infinite" points can easily go to negative depth)
-            if(p3dC1(2)<=0 && cosParallax<0.99998)
+            // 深度为负，失败
+			if(p3dC1(2)<=0 && cosParallax<0.99998)
                 continue;
 
             // Check depth in front of second camera (only if enough parallax, as "infinite" points can easily go to negative depth)
-            Eigen::Vector3f p3dC2 = R * p3dC1 + t;
-
+            // 转换到Camera2相机坐标系下
+			Eigen::Vector3f p3dC2 = R * p3dC1 + t;
+	        // 深度为负，失败
             if(p3dC2(2)<=0 && cosParallax<0.99998)
                 continue;
 
             // Check reprojection error in first image
+			// 3.检验在图像1中的重投影误差
             float im1x, im1y;
             float invZ1 = 1.0/p3dC1(2);
+			// 计算重投影像素坐标 u1 v1
             im1x = fx*p3dC1(0)*invZ1+cx;
             im1y = fy*p3dC1(1)*invZ1+cy;
-
+			// 计算误差
             float squareError1 = (im1x-kp1.pt.x)*(im1x-kp1.pt.x)+(im1y-kp1.pt.y)*(im1y-kp1.pt.y);
-
+	        // 误差超出阈值，失败
             if(squareError1>th2)
                 continue;
 
             // Check reprojection error in second image
+	        // 检验在图像2中的重投影误差
             float im2x, im2y;
             float invZ2 = 1.0/p3dC2(2);
+	        // 计算重投影像素坐标 u2 v2
             im2x = fx*p3dC2(0)*invZ2+cx;
             im2y = fy*p3dC2(1)*invZ2+cy;
-
+	        // 计算误差
             float squareError2 = (im2x-kp2.pt.x)*(im2x-kp2.pt.x)+(im2y-kp2.pt.y)*(im2y-kp2.pt.y);
-
+	        // 误差超出阈值，失败
             if(squareError2>th2)
                 continue;
-
+			// 通过检验，保存余弦
             vCosParallax.push_back(cosParallax);
+			// 保存三维点坐标
             vP3D[vMatches12[i].first] = cv::Point3f(p3dC1(0), p3dC1(1), p3dC1(2));
             nGood++;
-
+			// 如果未超出阈值，标记为合格点
             if(cosParallax<0.99998)
                 vbGood[vMatches12[i].first]=true;
         }
 
         if(nGood>0)
         {
+			// 从小到大排列余弦值，cos越大视差越小
             sort(vCosParallax.begin(),vCosParallax.end());
-
+			// 取视差较小的点，转换为角度制
             size_t idx = min(50,int(vCosParallax.size()-1));
             parallax = acos(vCosParallax[idx])*180/CV_PI;
         }
@@ -929,10 +964,11 @@ namespace ORB_SLAM3
 
         Eigen::Matrix3f U = svd.matrixU();
         Eigen::Matrix3f Vt = svd.matrixV().transpose();
-
+		// U 的第3列
         t = U.col(2);
+		// 尺度不确定性，对t归一化 ||t|| = 1
         t = t / t.norm();
-
+		// W存在两种情况 对应R有两种情况
         Eigen::Matrix3f W;
         W.setZero();
         W(0,1) = -1;
