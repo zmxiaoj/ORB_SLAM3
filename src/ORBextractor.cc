@@ -405,16 +405,23 @@ namespace ORB_SLAM3
                     7,0, 12,-2/*mean (0.127002), correlation (0.537452)*/,
                     -1,-6, 0,-11/*mean (0.127148), correlation (0.547401)*/
             };
-
+	/*
+	 * @brief 特征提取器构造函数
+	 * ***
+	 * @param[in] _iniThFAST 初始FAST特征点提取参数，可以提取出最明显的角点
+	 * @param[in] _minThFAST 图像纹理不丰富提取出的特征点不多，为了达到想要的特征点数目使用这个参数提取出不明显的角点
+	 */
     ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
                                int _iniThFAST, int _minThFAST):
             nfeatures(_nfeatures), scaleFactor(_scaleFactor), nlevels(_nlevels),
             iniThFAST(_iniThFAST), minThFAST(_minThFAST)
     {
+		// 根据金字塔层数调整vector大小
         mvScaleFactor.resize(nlevels);
         mvLevelSigma2.resize(nlevels);
         mvScaleFactor[0]=1.0f;
         mvLevelSigma2[0]=1.0f;
+		// 遍历层数设置系数
         for(int i=1; i<nlevels; i++)
         {
             mvScaleFactor[i]=mvScaleFactor[i-1]*scaleFactor;
@@ -433,29 +440,37 @@ namespace ORB_SLAM3
 
         mnFeaturesPerLevel.resize(nlevels);
         float factor = 1.0f / scaleFactor;
+		// 每层期望特征数目
         float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
 
         int sumFeatures = 0;
         for( int level = 0; level < nlevels-1; level++ )
         {
+			// cvRound四舍五入
             mnFeaturesPerLevel[level] = cvRound(nDesiredFeaturesPerScale);
             sumFeatures += mnFeaturesPerLevel[level];
             nDesiredFeaturesPerScale *= factor;
         }
+		// 将因为取整未分配的特征点数目分配到最高层金字塔中
         mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);
-
+		// pattern长度
         const int npoints = 512;
+		// 计算BRIEF描述子的随机采样点点集头指针
         const Point* pattern0 = (const Point*)bit_pattern_31_;
+		// std::back_inserter快速覆盖容器pattern之前的数据
         std::copy(pattern0, pattern0 + npoints, std::back_inserter(pattern));
 
         //This is for orientation
+		// 计算旋转相关
         // pre-compute the end of a row in a circular patch
+		// 只考虑1/4圆
         umax.resize(HALF_PATCH_SIZE + 1);
-
+		// cvFloor 向下取整； cvCeil向上取整  sqrt(2)/2 -> cos45
         int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1);
         int vmin = cvCeil(HALF_PATCH_SIZE * sqrt(2.f) / 2);
         const double hp2 = HALF_PATCH_SIZE*HALF_PATCH_SIZE;
         for (v = 0; v <= vmax; ++v)
+			// 计算每行u的边界坐标
             umax[v] = cvRound(sqrt(hp2 - v * v));
 
         // Make sure we are symmetric

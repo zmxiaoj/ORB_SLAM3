@@ -643,19 +643,24 @@ namespace ORB_SLAM3
         vn.reserve(8);
 
         //n'=[x1 0 x3] 4 posibilities e1=e3=1, e1=1 e3=-1, e1=-1 e3=1, e1=e3=-1
-        float aux1 = sqrt((d1*d1-d2*d2)/(d1*d1-d3*d3));
+        // x1 x3 的4种情况
+		float aux1 = sqrt((d1*d1-d2*d2)/(d1*d1-d3*d3));
         float aux3 = sqrt((d2*d2-d3*d3)/(d1*d1-d3*d3));
         float x1[] = {aux1,aux1,-aux1,-aux1};
         float x3[] = {aux3,-aux3,aux3,-aux3};
 
         //case d'=d2
+		// R' = [cos\theta 0 -sin\theta; 0 1 0; sin\theta 0 cos\theta]
+		// sin\theta
         float aux_stheta = sqrt((d1*d1-d2*d2)*(d2*d2-d3*d3))/((d1+d3)*d2);
-
+		// cos\theta
         float ctheta = (d2*d2+d1*d3)/((d1+d3)*d2);
+		// sin\theta的4种情况
         float stheta[] = {aux_stheta, -aux_stheta, -aux_stheta, aux_stheta};
 
         for(int i=0; i<4; i++)
         {
+			// R'
             Eigen::Matrix3f Rp;
             Rp.setZero();
             Rp(0,0) = ctheta;
@@ -663,24 +668,24 @@ namespace ORB_SLAM3
             Rp(1,1) = 1.f;
             Rp(2,0) = stheta[i];
             Rp(2,2) = ctheta;
-
+			// R = s * U * R' * V^t
             Eigen::Matrix3f R = s*U*Rp*Vt;
             vR.push_back(R);
-
+			// t'
             Eigen::Vector3f tp;
             tp(0) = x1[i];
             tp(1) = 0;
             tp(2) = -x3[i];
             tp *= d1-d3;
-
+			// t = U * t'
             Eigen::Vector3f t = U*tp;
             vt.push_back(t / t.norm());
-
+			// n'
             Eigen::Vector3f np;
             np(0) = x1[i];
             np(1) = 0;
             np(2) = x3[i];
-
+			// n = V * n'
             Eigen::Vector3f n = V*np;
             if(n(2) < 0)
                 n = -n;
@@ -736,13 +741,14 @@ namespace ORB_SLAM3
 
         // Instead of applying the visibility constraints proposed in the Faugeras' paper (which could fail for points seen with low parallax)
         // We reconstruct all hypotheses and check in terms of triangulated points and parallax
-        for(size_t i=0; i<8; i++)
+        // 对8种运动假设全部验证三角化效果
+		for(size_t i=0; i<8; i++)
         {
             float parallaxi;
             vector<cv::Point3f> vP3Di;
             vector<bool> vbTriangulatedi;
             int nGood = CheckRT(vR[i],vt[i],mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K,vP3Di, 4.0*mSigma2, vbTriangulatedi, parallaxi);
-
+			// 找到得分最高点
             if(nGood>bestGood)
             {
                 secondBestGood = bestGood;
@@ -758,7 +764,7 @@ namespace ORB_SLAM3
             }
         }
 
-
+		// 该条件下由H重建成功
         if(secondBestGood<0.75*bestGood && bestParallax>=minParallax && bestGood>minTriangulated && bestGood>0.9*N)
         {
             T21 = Sophus::SE3f(vR[bestSolutionIdx], vt[bestSolutionIdx]);

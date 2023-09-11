@@ -78,11 +78,12 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     }
 
 
-
+	// 无速度
     if(!F.HasVelocity()) {
         mVw.setZero();
         mbHasVelocity = false;
     }
+	// 有速度
     else
     {
         mVw = F.GetVelocity();

@@ -34,7 +34,7 @@
 #include <mutex>
 #include <chrono>
 
-
+// #define REGISTER_TIMES
 using namespace std;
 
 namespace ORB_SLAM3
@@ -1450,8 +1450,6 @@ bool Tracking::GetStepByStep()
     return bStepByStep;
 }
 
-
-
 Sophus::SE3f Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp, string filename)
 {
     //cout << "GrabImageStereo" << endl;
@@ -1517,7 +1515,6 @@ Sophus::SE3f Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat 
     return mCurrentFrame.GetPose();
 }
 
-
 Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp, string filename)
 {
     mImGray = imRGB;
@@ -1562,7 +1559,6 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
 
     return mCurrentFrame.GetPose();
 }
-
 
 Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)
 {
@@ -1619,7 +1615,6 @@ Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &times
 
     return mCurrentFrame.GetPose();
 }
-
 
 void Tracking::GrabImuData(const IMU::Point &imuMeasurement)
 {
@@ -1740,7 +1735,6 @@ void Tracking::PreintegrateIMU()
     //Verbose::PrintMess("Preintegration is finished!! ", Verbose::VERBOSITY_DEBUG);
 }
 
-
 bool Tracking::PredictStateIMU()
 {
     if(!mCurrentFrame.mpPrevFrame)
@@ -1795,7 +1789,6 @@ void Tracking::ResetFrameIMU()
 {
     // TODO To implement...
 }
-
 
 void Tracking::Track()
 {
@@ -1934,6 +1927,7 @@ void Tracking::Track()
 	else
     {
         // System is initialized. Track Frame.
+		// 系统完成初始化，跟踪前一帧
         bool bOK;
 
 #ifdef REGISTER_TIMES
@@ -1941,42 +1935,47 @@ void Tracking::Track()
 #endif
 
         // Initial camera pose estimation using motion model or relocalization (if tracking is lost)
+		// 非(局部地图失效，仅跟踪模式)
         if(!mbOnlyTracking)
         {
-
             // State OK
             // Local Mapping is activated. This is the normal behaviour, unless
             // you explicitly activate the "only tracking" mode.
+			// 正常跟踪模式
             if(mState==OK)
             {
-
                 // Local Mapping might have changed some MapPoints tracked in last frame
                 CheckReplacedInLastFrame();
-
+				// (无速度且IMU未初始化) 或 (当前帧的id小于最近完成重定位帧id+2 -> 刚刚完成重定位)
                 if((!mbVelocity && !pCurrentMap->isImuInitialized()) || mCurrentFrame.mnId<mnLastRelocFrameId+2)
                 {
                     Verbose::PrintMess("TRACK: Track with respect to the reference KF ", Verbose::VERBOSITY_DEBUG);
-                    bOK = TrackReferenceKeyFrame();
+                    // 参考帧跟踪
+					bOK = TrackReferenceKeyFrame();
                 }
                 else
                 {
                     Verbose::PrintMess("TRACK: Track with motion model", Verbose::VERBOSITY_DEBUG);
+					// 运动模型跟踪
                     bOK = TrackWithMotionModel();
                     if(!bOK)
                         bOK = TrackReferenceKeyFrame();
                 }
 
-
+				// 不ok
                 if (!bOK)
                 {
+					// 有IMU情况
                     if ( mCurrentFrame.mnId<=(mnLastRelocFrameId+mnFramesToResetIMU) &&
                          (mSensor==System::IMU_MONOCULAR || mSensor==System::IMU_STEREO || mSensor == System::IMU_RGBD))
                     {
                         mState = LOST;
                     }
+					// 非IMU，且当前地图中关键帧数目大于10
                     else if(pCurrentMap->KeyFramesInMap()>10)
                     {
                         // cout << "KF in map: " << pCurrentMap->KeyFramesInMap() << endl;
+						// 状态设置为RECCENTLY_LOST -> 刚刚跟踪丢失
                         mState = RECENTLY_LOST;
                         mTimeStampLost = mCurrentFrame.mTimeStamp;
                     }
@@ -1986,14 +1985,16 @@ void Tracking::Track()
                     }
                 }
             }
+			// 其他跟踪状态
             else
             {
-
+				// 状态为刚刚跟踪丢失
                 if (mState == RECENTLY_LOST)
                 {
                     Verbose::PrintMess("Lost for a short time", Verbose::VERBOSITY_NORMAL);
 
                     bOK = true;
+					// IMU
                     if((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD))
                     {
                         if(pCurrentMap->isImuInitialized())
@@ -2008,9 +2009,11 @@ void Tracking::Track()
                             bOK=false;
                         }
                     }
-                    else
+                    // 非IMU
+					else
                     {
                         // Relocalization
+						// 重定位模式
                         bOK = Relocalization();
                         //std::cout << "mCurrentFrame.mTimeStamp:" << to_string(mCurrentFrame.mTimeStamp) << std::endl;
                         //std::cout << "mTimeStampLost:" << to_string(mTimeStampLost) << std::endl;
@@ -2022,16 +2025,19 @@ void Tracking::Track()
                         }
                     }
                 }
+				// 状态为跟踪丢失
                 else if (mState == LOST)
                 {
-
                     Verbose::PrintMess("A new map is started...", Verbose::VERBOSITY_NORMAL);
-
+					// 当前地图中关键帧小于10
                     if (pCurrentMap->KeyFramesInMap()<10)
                     {
+						// 重置当前地图
                         mpSystem->ResetActiveMap();
                         Verbose::PrintMess("Reseting current map...", Verbose::VERBOSITY_NORMAL);
-                    }else
+                    }
+					else
+						// 创建多地图
                         CreateMapInAtlas();
 
                     if(mpLastKeyFrame)
@@ -2131,12 +2137,13 @@ void Tracking::Track()
         std::chrono::steady_clock::time_point time_StartLMTrack = std::chrono::steady_clock::now();
 #endif
         // If we have an initial estimation of the camera pose and matching. Track the local map.
+		// 有初始估计和局部地图
         if(!mbOnlyTracking)
         {
             if(bOK)
             {
+				// 跟踪局部地图
                 bOK = TrackLocalMap();
-
             }
             if(!bOK)
                 cout << "Fail to track local map!" << endl;
@@ -2209,6 +2216,7 @@ void Tracking::Track()
 #endif
 
         // Update drawer
+		// 更新frame drawer
         mpFrameDrawer->Update(this);
         if(mCurrentFrame.isSet())
             mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.GetPose());
@@ -2279,6 +2287,7 @@ void Tracking::Track()
         }
 
         // Reset if the camera get lost soon after initialization
+		// 相机初始化后跟踪丢失进行reset
         if(mState==LOST)
         {
             if(pCurrentMap->KeyFramesInMap()<=10)
@@ -2306,13 +2315,12 @@ void Tracking::Track()
     }
 
 
-
-
     if(mState==OK || mState==RECENTLY_LOST)
     {
         // Store frame pose information to retrieve the complete camera trajectory afterwards.
         if(mCurrentFrame.isSet())
         {
+			// 参考关键帧到当前帧位姿变换
             Sophus::SE3f Tcr_ = mCurrentFrame.GetPose() * mCurrentFrame.mpReferenceKF->GetPoseInverse();
             mlRelativeFramePoses.push_back(Tcr_);
             mlpReferences.push_back(mCurrentFrame.mpReferenceKF);
@@ -2341,7 +2349,6 @@ void Tracking::Track()
     }
 #endif
 }
-
 
 void Tracking::StereoInitialization()
 {
@@ -2455,7 +2462,6 @@ void Tracking::StereoInitialization()
     }
 }
 
-
 void Tracking::MonocularInitialization()
 {
 	//  未准备好初始化
@@ -2517,9 +2523,11 @@ void Tracking::MonocularInitialization()
         Sophus::SE3f Tcw;
         vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
-		// 双视图三角化
+		// 根据不同相机模型调用双视图三角化
+		// 成功完成匹配点三角化
         if(mpCamera->ReconstructWithTwoViews(mInitialFrame.mvKeysUn,mCurrentFrame.mvKeysUn,mvIniMatches,Tcw,mvIniP3D,vbTriangulated))
         {
+			// 遍历匹配点，未能成功三角化删除匹配
             for(size_t i=0, iend=mvIniMatches.size(); i<iend;i++)
             {
                 if(mvIniMatches[i]>=0 && !vbTriangulated[i])
@@ -2530,16 +2538,17 @@ void Tracking::MonocularInitialization()
             }
 
             // Set Frame Poses
+			// 设定初始化帧位姿
             mInitialFrame.SetPose(Sophus::SE3f());
+			// 设定当前帧位姿
             mCurrentFrame.SetPose(Tcw);
 
 			// 创建初始单目地图
+			// todo
             CreateInitialMapMonocular();
         }
     }
 }
-
-
 
 void Tracking::CreateInitialMapMonocular()
 {
@@ -2676,7 +2685,6 @@ void Tracking::CreateInitialMapMonocular()
     initID = pKFcur->mnId;
 }
 
-
 void Tracking::CreateMapInAtlas()
 {
     mnLastInitFrameId = mCurrentFrame.mnId;
@@ -2733,7 +2741,6 @@ void Tracking::CheckReplacedInLastFrame()
         }
     }
 }
-
 
 bool Tracking::TrackReferenceKeyFrame()
 {
