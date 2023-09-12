@@ -309,7 +309,7 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
 #ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_StartExtORB = std::chrono::steady_clock::now();
 #endif
-	// 提取ORB
+	// 对单目图像提取ORB
     ExtractORB(0,imGray,0,1000);
 #ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_EndExtORB = std::chrono::steady_clock::now();
@@ -317,7 +317,7 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
 #endif
 
-
+	// 特征点数目
     N = mvKeys.size();
     if(mvKeys.empty())
         return;
@@ -328,33 +328,36 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     mvuRight = vector<float>(N,-1);
     mvDepth = vector<float>(N,-1);
     mnCloseMPs = 0;
-
+	// 初始化地图点 N 个
     mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));
 
     mmProjectPoints.clear();// = map<long unsigned int, cv::Point2f>(N, static_cast<cv::Point2f>(NULL));
     mmMatchedInImage.clear();
-
+	// 记录外点
     mvbOutlier = vector<bool>(N,false);
 
     // This is done only for the first Frame (or after a change in the calibration)
+	// 第一帧或者标定数据改变后
     if(mbInitialComputations)
     {
+		// 计算去畸变后的图像边界
         ComputeImageBounds(imGray);
-
+		// 一个像素占据多少图像网格列(宽)
         mfGridElementWidthInv=static_cast<float>(FRAME_GRID_COLS)/static_cast<float>(mnMaxX-mnMinX);
+	    // 一个像素占据多少图像网格行(高)
         mfGridElementHeightInv=static_cast<float>(FRAME_GRID_ROWS)/static_cast<float>(mnMaxY-mnMinY);
-
+		// K
         fx = static_cast<Pinhole*>(mpCamera)->toK().at<float>(0,0);
         fy = static_cast<Pinhole*>(mpCamera)->toK().at<float>(1,1);
         cx = static_cast<Pinhole*>(mpCamera)->toK().at<float>(0,2);
         cy = static_cast<Pinhole*>(mpCamera)->toK().at<float>(1,2);
         invfx = 1.0f/fx;
         invfy = 1.0f/fy;
-
+		// 标志复位
         mbInitialComputations=false;
     }
 
-
+	// baseline
     mb = mbf/fx;
 
     //Set no stereo fisheye information
@@ -405,8 +408,6 @@ void Frame::AssignFeaturesToGrid()
             }
         }
 
-
-
     for(int i=0;i<N;i++)
     {
 		// 逻辑左到右判断是否存在右目图像
@@ -429,9 +430,12 @@ void Frame::AssignFeaturesToGrid()
 void Frame::ExtractORB(int flag, const cv::Mat &im, const int x0, const int x1)
 {
     vector<int> vLapping = {x0,x1};
-    if(flag==0)
+    // 对左图提取
+	if(flag==0)
+		// 调用ORBextractor的仿函数()
         monoLeft = (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,vLapping);
-    else
+    // 对右图提取，描述子计算不同
+	else
         monoRight = (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight,vLapping);
 }
 
@@ -757,6 +761,7 @@ void Frame::ComputeBoW()
 
 void Frame::UndistortKeyPoints()
 {
+	// 无畸变
     if(mDistCoef.at<float>(0)==0.0)
     {
         mvKeysUn=mvKeys;

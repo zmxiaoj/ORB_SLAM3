@@ -425,7 +425,7 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
         if(mbShutDown)
             return Sophus::SE3f();
     }
-
+	// check sensor type
     if(mSensor!=MONOCULAR && mSensor!=IMU_MONOCULAR)
     {
         cerr << "ERROR: you called TrackMonocular but input sensor was not set to Monocular nor Monocular-Inertial." << endl;
@@ -451,7 +451,7 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
             {
                 usleep(1000);
             }
-			// 只进行localization模式
+			//
             mpTracker->InformOnlyTracking(true);
             mbActivateLocalizationMode = false;
         }
@@ -493,7 +493,6 @@ Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, 
 
     return Tcw;
 }
-
 
 
 void System::ActivateLocalizationMode()

@@ -1559,7 +1559,9 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
 
     return mCurrentFrame.GetPose();
 }
-
+/*
+ * @brief 输入单目图像，计算世界坐标系下到当前帧相机坐标系的变换矩阵
+ */
 Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)
 {
     mImGray = im;
@@ -1578,7 +1580,7 @@ Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &times
         else
             cvtColor(mImGray,mImGray,cv::COLOR_BGRA2GRAY);
     }
-
+	// Mono 构造 Frame类
     if (mSensor == System::MONOCULAR)
     {
 		// 对每一frame处理，提取关键帧，设置初始速度
@@ -1589,6 +1591,7 @@ Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &times
 		else
             mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth);
     }
+	// Mono+IMU
     else if(mSensor == System::IMU_MONOCULAR)
     {
         if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET)
@@ -1598,7 +1601,7 @@ Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &times
         else
             mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth,&mLastFrame,*mpImuCalib);
     }
-
+	// 存储未初始化时的第1帧图像时间戳
     if (mState==NO_IMAGES_YET)
         t0=timestamp;
 
@@ -1789,7 +1792,9 @@ void Tracking::ResetFrameIMU()
 {
     // TODO To implement...
 }
-
+/*
+ * @breif 对frame对象进行跟踪
+ */
 void Tracking::Track()
 {
 	// 步进式
@@ -2461,7 +2466,9 @@ void Tracking::StereoInitialization()
         mState=OK;
     }
 }
-
+/*
+ * @brief 进行单目初始化操作
+ */
 void Tracking::MonocularInitialization()
 {
 	//  未准备好初始化

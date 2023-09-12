@@ -104,27 +104,42 @@ namespace ORB_SLAM3
 
 
     const float factorPI = (float)(CV_PI/180.f);
+	/*
+	 * @brief 计算关键点的描述子
+	 * static 全局静态，只能在本文件内调用
+	 * @param[in] kpt       特征点对象
+	 * @param[in] img       提取出特征点的图像
+     * @param[in] pattern   预定义好的随机采样点集
+     * @param[out] desc     用作输出变量，保存计算好的描述子，长度为32*8bit
+	 */
     static void computeOrbDescriptor(const KeyPoint& kpt,
                                      const Mat& img, const Point* pattern,
                                      uchar* desc)
     {
+		// 将特征点的角度转换为弧度制
         float angle = (float)kpt.angle*factorPI;
         float a = (float)cos(angle), b = (float)sin(angle);
-
+		// 取得图像里关键点中心坐标[y,x]指针
         const uchar* center = &img.at<uchar>(cvRound(kpt.pt.y), cvRound(kpt.pt.x));
+		// 图像单行的字节数
         const int step = (int)img.step;
+		// 对基础BRIEF描述子，增加方向信息
+		// 将采样pattern中x轴的方向旋转到关键点方向，获得采样点中某个idx所对应的点的灰度值
+		// 旋转后坐标x' y' 旋转前坐标x y
+	    // x'= xcos(θ) - ysin(θ)   y'= xsin(θ) + ycos(θ)
+		// 找到y'行x'列  y'* step + x'
+#define GET_VALUE(idx) center[cvRound(pattern[idx].x*b + pattern[idx].y*a)*step +cvRound(pattern[idx].x*a - pattern[idx].y*b)]
 
-#define GET_VALUE(idx) \
-        center[cvRound(pattern[idx].x*b + pattern[idx].y*a)*step + \
-               cvRound(pattern[idx].x*a - pattern[idx].y*b)]
-
-
+		// brief描述子由32*8位组成
+		// 每一位是来自于两个像素点灰度的直接比较，每比较出8bit结果，需要16个随机点pattern需要+=16
         for (int i = 0; i < 32; ++i, pattern += 16)
         {
             int t0, t1, val;
             t0 = GET_VALUE(0); t1 = GET_VALUE(1);
+			// 描述字节的bit0
             val = t0 < t1;
             t0 = GET_VALUE(2); t1 = GET_VALUE(3);
+	        // 描述字节的bit1
             val |= (t0 < t1) << 1;
             t0 = GET_VALUE(4); t1 = GET_VALUE(5);
             val |= (t0 < t1) << 2;
@@ -138,10 +153,10 @@ namespace ORB_SLAM3
             val |= (t0 < t1) << 6;
             t0 = GET_VALUE(14); t1 = GET_VALUE(15);
             val |= (t0 < t1) << 7;
-
+			// 保存描述子
             desc[i] = (uchar)val;
         }
-
+// 避免和程序中的其他部分冲突，在使用完成后取消这个宏定义
 #undef GET_VALUE
     }
 
@@ -421,13 +436,14 @@ namespace ORB_SLAM3
         mvLevelSigma2.resize(nlevels);
         mvScaleFactor[0]=1.0f;
         mvLevelSigma2[0]=1.0f;
-		// 遍历层数设置系数
+		// 遍历层数计算比例因子
         for(int i=1; i<nlevels; i++)
         {
+			// 根据前一层计算比例因子
             mvScaleFactor[i]=mvScaleFactor[i-1]*scaleFactor;
             mvLevelSigma2[i]=mvScaleFactor[i]*mvScaleFactor[i];
         }
-
+		// 计算比例因子倒数
         mvInvScaleFactor.resize(nlevels);
         mvInvLevelSigma2.resize(nlevels);
         for(int i=0; i<nlevels; i++)
@@ -440,10 +456,13 @@ namespace ORB_SLAM3
 
         mnFeaturesPerLevel.resize(nlevels);
         float factor = 1.0f / scaleFactor;
-		// 每层期望特征数目
+		// N特征点总数目 S图像金字塔总面积
+		// 单位面积分配特征点数目 N_avg = N/S = N/(C * (1 - s^2m)/(1 - s^2))
+	    // 每层期望特征数目 N_i = N_avg * S_i(= C * s^2i) 实际操作将s代替s^2进行均匀分配
         float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
 
         int sumFeatures = 0;
+		// 遍历每层图像金字塔，计算每层期望特征数
         for( int level = 0; level < nlevels-1; level++ )
         {
 			// cvRound四舍五入
@@ -455,7 +474,7 @@ namespace ORB_SLAM3
         mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);
 		// pattern长度
         const int npoints = 512;
-		// 计算BRIEF描述子的随机采样点点集头指针
+		// 计算BRIEF描述子的随机采样点点集头指针，pattern指针指向bit_pattern_31_
         const Point* pattern0 = (const Point*)bit_pattern_31_;
 		// std::back_inserter快速覆盖容器pattern之前的数据
         std::copy(pattern0, pattern0 + npoints, std::back_inserter(pattern));
@@ -793,22 +812,30 @@ namespace ORB_SLAM3
         return vResultKeys;
     }
 
+	/*
+	 * @brief 计算八叉树的特征点
+	 * @param[out]  allKeypoints 保存特征点结果
+	 */
     void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoints)
     {
+		// 根据金字塔层数调整
         allKeypoints.resize(nlevels);
-
+		// 图像正方形cell的尺寸
         const float W = 35;
-
+		// 遍历每一层图像
         for (int level = 0; level < nlevels; ++level)
         {
+			// 计算该层图像的有效坐标边界
+			// 计算特征点时需要半径为3的圆 -> -3
             const int minBorderX = EDGE_THRESHOLD-3;
             const int minBorderY = minBorderX;
             const int maxBorderX = mvImagePyramid[level].cols-EDGE_THRESHOLD+3;
             const int maxBorderY = mvImagePyramid[level].rows-EDGE_THRESHOLD+3;
-
+			// 需要平均分配的特征点
             vector<cv::KeyPoint> vToDistributeKeys;
+			// 需要过量采集，预分配10倍空间
             vToDistributeKeys.reserve(nfeatures*10);
-
+			// 有效边界长、宽
             const float width = (maxBorderX-minBorderX);
             const float height = (maxBorderY-minBorderY);
 
@@ -1089,41 +1116,60 @@ namespace ORB_SLAM3
             computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
     }
 
+	/*
+	 * @brief 计算关键点集合的描述子
+	 * static 仅能在本文件中被调用
+	 */
     static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Mat& descriptors,
                                    const vector<Point>& pattern)
     {
+		// 清空描述子容器
         descriptors = Mat::zeros((int)keypoints.size(), 32, CV_8UC1);
-
+		// 遍历每个关键点，计算描述子
         for (size_t i = 0; i < keypoints.size(); i++)
-            computeOrbDescriptor(keypoints[i], image, &pattern[0], descriptors.ptr((int)i));
+            computeOrbDescriptor(keypoints[i],
+								 image,
+								 &pattern[0],  // 随机点集的首地址
+								 descriptors.ptr((int)i)); // 提取描述子的保存位置
     }
-
+	/*
+	 * @brief ORBextractor实现的仿函数
+	 * @param[in] _image 提取对象
+	 * @param[in] _mask 忽略，未使用
+	 * @param[in&out] _keypoints 存储关键点
+	 * @param[in&out] _descriptors 存储描述子
+	 */
     int ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPoint>& _keypoints,
                                   OutputArray _descriptors, std::vector<int> &vLappingArea)
     {
         //cout << "[ORBextractor]: Max Features: " << nfeatures << endl;
         if(_image.empty())
             return -1;
-
+		// 检查图像格式
         Mat image = _image.getMat();
         assert(image.type() == CV_8UC1 );
 
         // Pre-compute the scale pyramid
+		// 构建图像金字塔
         ComputePyramid(image);
-
+		// 一维图像金字塔层数，二维单层图像金字塔全部特征点
         vector < vector<KeyPoint> > allKeypoints;
+		// 八叉树计算特征点并进行分配
         ComputeKeyPointsOctTree(allKeypoints);
         //ComputeKeyPointsOld(allKeypoints);
 
         Mat descriptors;
 
         int nkeypoints = 0;
+		// 遍历图像金字塔计算特征点数目
         for (int level = 0; level < nlevels; ++level)
             nkeypoints += (int)allKeypoints[level].size();
         if( nkeypoints == 0 )
             _descriptors.release();
+		// 存在描述子
         else
         {
+			// 创建描述子矩阵 nkeypoints矩阵的行数 32矩阵的列数(对应32*8=256位描述子)  CV_8U矩阵元素格式
             _descriptors.create(nkeypoints, 32, CV_8U);
             descriptors = _descriptors.getMat();
         }
@@ -1135,8 +1181,10 @@ namespace ORB_SLAM3
         int offset = 0;
         //Modified for speeding up stereo fisheye matching
         int monoIndex = 0, stereoIndex = nkeypoints-1;
+		// 遍历每一层图像金字塔
         for (int level = 0; level < nlevels; ++level)
         {
+			// 取出当前层的特征点
             vector<KeyPoint>& keypoints = allKeypoints[level];
             int nkeypointsLevel = (int)keypoints.size();
 
@@ -1144,34 +1192,44 @@ namespace ORB_SLAM3
                 continue;
 
             // preprocess the resized image
+			// 深拷贝当前金字塔所在层级的图像
             Mat workingMat = mvImagePyramid[level].clone();
+			// 将清晰原图像进行高斯模糊处理 Size(7, 7)为高斯核大小 在x y方向的标准差 边缘拓展点插值类型
             GaussianBlur(workingMat, workingMat, Size(7, 7), 2, 2, BORDER_REFLECT_101);
 
             // Compute the descriptors
-            //Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
+            // Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
+			// desc 保存当前层计算的描述子
             Mat desc = cv::Mat(nkeypointsLevel, 32, CV_8U);
+			// 计算关键点的描述子
             computeDescriptors(workingMat, keypoints, desc, pattern);
-
+			// 将偏移量offset更新本层的特征点
             offset += nkeypointsLevel;
-
 
             float scale = mvScaleFactor[level]; //getScale(level, firstLevel, scaleFactor);
             int i = 0;
+			// 遍历当前层特征点
             for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
-                         keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint){
-
+                         keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint)
+			{
                 // Scale keypoint coordinates
-                if (level != 0){
+				// 将非0层特征点恢复尺度
+                if (level != 0)
+				{
                     keypoint->pt *= scale;
                 }
-
-                if(keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1]){
+				// ？双目相关
+                if(keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1])
+				{
                     _keypoints.at(stereoIndex) = (*keypoint);
                     desc.row(i).copyTo(descriptors.row(stereoIndex));
                     stereoIndex--;
                 }
-                else{
+                else
+				{
+					// 将索引处关键点更新
                     _keypoints.at(monoIndex) = (*keypoint);
+					// 将desc第i行复制到全部描述子矩阵索引行
                     desc.row(i).copyTo(descriptors.row(monoIndex));
                     monoIndex++;
                 }
@@ -1181,25 +1239,51 @@ namespace ORB_SLAM3
         //cout << "[ORBextractor]: extracted " << _keypoints.size() << " KeyPoints" << endl;
         return monoIndex;
     }
-
+	/*
+	 * @brief 根据输入图像生成图像金字塔
+	 */
     void ORBextractor::ComputePyramid(cv::Mat image)
     {
+		// 遍历层数
         for (int level = 0; level < nlevels; ++level)
         {
+			// 取出当前层的因子倒数
             float scale = mvInvScaleFactor[level];
+			// 计算当前层像素宽x高
             Size sz(cvRound((float)image.cols*scale), cvRound((float)image.rows*scale));
+			// 矩形图像两侧增加边缘后计算大小
             Size wholeSize(sz.width + EDGE_THRESHOLD*2, sz.height + EDGE_THRESHOLD*2);
             Mat temp(wholeSize, image.type()), masktemp;
+			// 取出不含边缘的图像部分
             mvImagePyramid[level] = temp(Rect(EDGE_THRESHOLD, EDGE_THRESHOLD, sz.width, sz.height));
 
             // Compute the resized image
+			// 非第0层
             if( level != 0 )
             {
-                resize(mvImagePyramid[level-1], mvImagePyramid[level], sz, 0, 0, INTER_LINEAR);
+				// 将上一层图像根据sz缩放到当前层
+                resize(mvImagePyramid[level-1], // 上层图像作为输入
+					   mvImagePyramid[level],   // 当前层图像作为输出
+					   sz,                    // 输出图像尺寸
+					   0, 0,                 // 水平、垂直方向上的缩放系数，0表示自动计算
+					   INTER_LINEAR);   // 图像缩放插值算法
+				// 将源图像拷贝到图像中间，四周填充像素
+                copyMakeBorder(mvImagePyramid[level], // 源图像
+							   temp,                  // 输出图像
+							   EDGE_THRESHOLD, EDGE_THRESHOLD,  // 四周填充像素
+							   EDGE_THRESHOLD, EDGE_THRESHOLD,
+                               BORDER_REFLECT_101+BORDER_ISOLATED); // 设置填充方式
+					            /*Various border types, image boundaries are denoted with '|'
+								* BORDER_REPLICATE:     aaaaaa|abcdefgh|hhhhhhh
+								* BORDER_REFLECT:       fedcba|abcdefgh|hgfedcb
+								* BORDER_REFLECT_101:   gfedcb|abcdefgh|gfedcba
+								* BORDER_WRAP:          cdefgh|abcdefgh|abcdefg
+								* BORDER_CONSTANT:      iiiiii|abcdefgh|iiiiiii  with some specified 'i'
+								* BORDER_ISOLATED	表示对整个图像进行操作
+								*/
 
-                copyMakeBorder(mvImagePyramid[level], temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
-                               BORDER_REFLECT_101+BORDER_ISOLATED);
             }
+			// 第0层
             else
             {
                 copyMakeBorder(image, temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
