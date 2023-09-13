@@ -776,7 +776,7 @@ namespace ORB_SLAM3
         return false;
     }
 
-	/*
+	/**
 	 * @brief 对特征点归一化
 	 * @param[in] vKeys 待归一化的特征点像素坐标
 	 * @param[out] vNormalizedPoints 归一化后的特征点像素坐标
@@ -830,7 +830,7 @@ namespace ORB_SLAM3
         T(1,2) = -meanY*sY;
         T(2,2) = 1.f;
     }
-	/*
+	/**
 	 * @brief 进行cheirality check，验证R t
 	 */
     int TwoViewReconstruction::CheckRT(const Eigen::Matrix3f &R, const Eigen::Vector3f &t, const vector<cv::KeyPoint> &vKeys1, const vector<cv::KeyPoint> &vKeys2,

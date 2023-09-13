@@ -531,7 +531,10 @@ Tracking::~Tracking()
     //f_track_stats.close();
 
 }
-
+/**
+ * @brief 根据参数类读取参数
+ * @param settings 参数类
+ */
 void Tracking::newParameterLoader(Settings *settings) {
     mpCamera = settings->camera1();
     mpCamera = mpAtlas->AddCamera(mpCamera);
@@ -616,7 +619,10 @@ void Tracking::newParameterLoader(Settings *settings) {
 
     mpImuPreintegratedFromLastKF = new IMU::Preintegrated(IMU::Bias(),*mpImuCalib);
 }
-
+/**
+ * @brief 根据参数类读取参数
+ * @param settings 参数类
+ */
 bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
 {
     mDistCoef = cv::Mat::zeros(4,1,CV_32F);
@@ -1214,7 +1220,10 @@ bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)
 
     return true;
 }
-
+/**
+ * @brief 根据文件读取特征点参数
+ * @param fSettings 配置文件
+ */
 bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings)
 {
     bool b_miss_params = false;
@@ -1298,7 +1307,10 @@ bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings)
 
     return true;
 }
-
+/**
+ * @brief 根据文件读取IMU参数
+ * @param fSettings 配置文件
+ */
 bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
 {
     bool b_miss_params = false;
@@ -1424,17 +1436,26 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
 
     return true;
 }
-
+/**
+ * @brief 设置局部建图器
+ * @param pLocalMapper 局部地图类
+ */
 void Tracking::SetLocalMapper(LocalMapping *pLocalMapper)
 {
     mpLocalMapper=pLocalMapper;
 }
-
+/**
+ * @brief 设置回环器
+ * @param pLoopClosing 回环类
+ */
 void Tracking::SetLoopClosing(LoopClosing *pLoopClosing)
 {
     mpLoopClosing=pLoopClosing;
 }
-
+/**
+ * @brief 设置显示器
+ * @param pViewer 显示类
+ */
 void Tracking::SetViewer(Viewer *pViewer)
 {
     mpViewer=pViewer;
@@ -1559,7 +1580,7 @@ Sophus::SE3f Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, co
 
     return mCurrentFrame.GetPose();
 }
-/*
+/**
  * @brief 输入单目图像，计算世界坐标系下到当前帧相机坐标系的变换矩阵
  */
 Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename)
@@ -1819,7 +1840,7 @@ void Tracking::Track()
         cout << "ERROR: There is not an active map in the atlas" << endl;
     }
 
-	// 不是无图像状态
+	// 不是无图像状态 处理异常时间戳
     if(mState!=NO_IMAGES_YET)
     {
 		// 当前帧时间戳小于前一帧
@@ -1865,14 +1886,14 @@ void Tracking::Track()
 
     if ((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD) && mpLastKeyFrame)
         mCurrentFrame.SetNewBias(mpLastKeyFrame->GetImuBias());
-
+	// 更新状态
     if(mState==NO_IMAGES_YET)
     {
         mState = NOT_INITIALIZED;
     }
 
     mLastProcessedState=mState;
-
+	// IMU模式且没有创建地图的情况下对IMU数据进行预积分
     if ((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD) && !mbCreatedMap)
     {
 #ifdef REGISTER_TIMES
@@ -1890,14 +1911,19 @@ void Tracking::Track()
     mbCreatedMap = false;
 
     // Get Map Mutex -> Map cannot be changed
-    unique_lock<mutex> lock(pCurrentMap->mMutexMapUpdate);
+	// 地图更新时加锁 保证地图不会发生变化
+	// 是否影响地图的实时更新?
+	// 主要耗时在构造帧中特征点的提取和匹配部分,在那个时候地图是没有被上锁的,有足够的时间更新地图
+	unique_lock<mutex> lock(pCurrentMap->mMutexMapUpdate);
 
     mbMapUpdated = false;
 
     int nCurMapChangeIndex = pCurrentMap->GetMapChangeIndex();
     int nMapChangeIndex = pCurrentMap->GetLastMapChange();
+	// 判断地图id是否更新
     if(nCurMapChangeIndex>nMapChangeIndex)
     {
+		// 检测到地图更新
         pCurrentMap->SetLastMapChange(nCurMapChangeIndex);
         mbMapUpdated = true;
     }
@@ -1916,19 +1942,20 @@ void Tracking::Track()
         }
 
         //mpFrameDrawer->Update(this);
-
+		// 初始化未成功
         if(mState!=OK) // If rightly initialized, mState=OK
         {
             mLastFrame = Frame(mCurrentFrame);
             return;
         }
-		// 初始化地图信息
+		// 当前地图为第一个
         if(mpAtlas->GetAllMaps().size() == 1)
         {
+			// 记录当前帧id为第一帧
             mnFirstFrameId = mCurrentFrame.mnId;
         }
     }
-    // 已初始化
+    // 已初始化 系统跟踪
 	else
     {
         // System is initialized. Track Frame.
@@ -1940,7 +1967,9 @@ void Tracking::Track()
 #endif
 
         // Initial camera pose estimation using motion model or relocalization (if tracking is lost)
-		// 非(局部地图失效，仅跟踪模式)
+	    // mbOnlyTracking等于false表示正常SLAM模式（定位+地图更新）
+		// mbOnlyTracking等于true表示仅定位模式
+	    // tracking 类构造时默认为false 在viewer中开关ActivateLocalizationMode控制是否开启mbOnlyTracking
         if(!mbOnlyTracking)
         {
             // State OK
@@ -2055,6 +2084,7 @@ void Tracking::Track()
             }
 
         }
+		// 仅定位模式
         else
         {
             // Localization Mode: Local Mapping is deactivated (TODO Not available in inertial mode)
@@ -2475,17 +2505,19 @@ void Tracking::MonocularInitialization()
     if(!mbReadyToInitializate)
     {
         // Set Reference Frame
+		// 当前帧特征点大于100
         if(mCurrentFrame.mvKeys.size()>100)
         {
-
+			// 构造初始帧
             mInitialFrame = Frame(mCurrentFrame);
+			// 构造上一帧(记为当前帧)
             mLastFrame = Frame(mCurrentFrame);
             mvbPrevMatched.resize(mCurrentFrame.mvKeysUn.size());
             for(size_t i=0; i<mCurrentFrame.mvKeysUn.size(); i++)
                 mvbPrevMatched[i]=mCurrentFrame.mvKeysUn[i].pt;
-
+			// 记录所有匹配 -1
             fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
-
+	        // 初始化预积分
             if (mSensor == System::IMU_MONOCULAR)
             {
                 if(mpImuPreintegratedFromLastKF)
@@ -2497,16 +2529,17 @@ void Tracking::MonocularInitialization()
 
             }
 
-			// 更新准备初始化状态
+			// 更新状态下一帧准备初始化
             mbReadyToInitializate = true;
 
             return;
         }
     }
-    // 准备好初始化
+    // 第二帧 准备好初始化
 	else
     {
-		// 如果关键点小于100 或 (IMU+Mono 且 上一帧与参考帧间相差) 未准备好初始化
+		// 如果当前帧特征点小于100 或 (IMU+Mono 且 上一帧与参考帧间相差)
+		// 未准备好初始化
         if (((int)mCurrentFrame.mvKeys.size()<=100)||((mSensor == System::IMU_MONOCULAR)&&(mLastFrame.mTimeStamp-mInitialFrame.mTimeStamp>1.0)))
         {
             mbReadyToInitializate = false;
@@ -2515,8 +2548,11 @@ void Tracking::MonocularInitialization()
         }
 
         // Find correspondences
-		// 关键点匹配
+		// 构造ORB匹配器
+	    // 0.9 表示最佳的和次佳特征点评分的比值阈值，这里是比较宽松的，跟踪时一般是0.7
+		// true 表示检查特征点的方向
         ORBmatcher matcher(0.9,true);
+		// 对前两帧进行特征点匹配
         int nmatches = matcher.SearchForInitialization(mInitialFrame,mCurrentFrame,mvbPrevMatched,mvIniMatches,100);
 
         // Check if there are enough correspondences

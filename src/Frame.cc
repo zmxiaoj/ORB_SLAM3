@@ -369,12 +369,12 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     monoLeft = -1;
     monoRight = -1;
 
-	// 特征点均匀化
+	// 将特征点分配到图像网格中
     AssignFeaturesToGrid();
 
 	// 存在前一帧
     if(pPrevF)
-    {   // 2023.09.01
+    {
         if(pPrevF->HasVelocity())
         {
 			// 根据前一帧速度进行预测
@@ -758,7 +758,9 @@ void Frame::ComputeBoW()
         mpORBvocabulary->transform(vCurrentDesc,mBowVec,mFeatVec,4);
     }
 }
-
+/*
+ * @brief 调用opencv函数进行去畸变
+ */
 void Frame::UndistortKeyPoints()
 {
 	// 无畸变
