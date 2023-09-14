@@ -49,6 +49,7 @@ namespace ORB_SLAM3
 
         // Fill structures with current keypoints and matches with reference frame
         // Reference Frame: 1, Current Frame: 2
+		// 存放匹配特征点vKey1 vKey2的索引
         mvMatches12.clear();
         mvMatches12.reserve(mvKeys2.size());
         mvbMatched1.resize(mvKeys1.size());
@@ -77,10 +78,11 @@ namespace ORB_SLAM3
         }
 
         // Generate sets of 8 points for each RANSAC iteration
+		// 默认迭代200次
         mvSets = vector< vector<size_t> >(mMaxIterations,vector<size_t>(8,0));
 
         DUtils::Random::SeedRandOnce(0);
-
+		// 生成RANSAC迭代的随机特征点对
         for(int it=0; it<mMaxIterations; it++)
         {
             vAvailableIndices = vAllIndices;

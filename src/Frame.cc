@@ -389,7 +389,9 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     mpMutexImu = new std::mutex();
 }
 
-
+/**
+ * @breif 将特征点划分到网格中
+ */
 void Frame::AssignFeaturesToGrid()
 {
     // Fill matrix with points
@@ -407,10 +409,11 @@ void Frame::AssignFeaturesToGrid()
                 mGridRight[i][j].reserve(nReserve);
             }
         }
-
+	// 遍历特征点分配到网格中
     for(int i=0;i<N;i++)
     {
 		// 逻辑左到右判断是否存在右目图像
+		// 取出特征点索引
         const cv::KeyPoint &kp = (Nleft == -1) ? mvKeysUn[i]
                                                  : (i < Nleft) ? mvKeys[i]
                                                                  : mvKeysRight[i - Nleft];
@@ -668,7 +671,15 @@ Eigen::Vector3f Frame::inRefCoordinates(Eigen::Vector3f pCw)
 {
     return mRcw * pCw + mtcw;
 }
-
+/**
+ * @brief 给定特征点坐标，返回搜索区域内所有特征点
+ * @param x 给定点的x
+ * @param y 给定点的y
+ * @param r 搜索半径
+ * @param minLevel 金字塔下边界层
+ * @param maxLevel 金字塔上边界层
+ * @param bRight 是否是右相机
+ */
 vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const float  &r, const int minLevel, const int maxLevel, const bool bRight) const
 {
     vector<size_t> vIndices;
@@ -676,25 +687,28 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
 
     float factorX = r;
     float factorY = r;
-
+	// 计算半径为r圆左右上下边界所在的网格列和行的id
+	// x-mnMinX-factorX为搜索圆最左像素
+	// mfGridElementWidthInv为网格/像素系数
     const int nMinCellX = max(0,(int)floor((x-mnMinX-factorX)*mfGridElementWidthInv));
+	// 左边界结果超出网格列数 结果错误未找到特征点
     if(nMinCellX>=FRAME_GRID_COLS)
     {
         return vIndices;
     }
-
+	// 右边界
     const int nMaxCellX = min((int)FRAME_GRID_COLS-1,(int)ceil((x-mnMinX+factorX)*mfGridElementWidthInv));
     if(nMaxCellX<0)
     {
         return vIndices;
     }
-
+	// 上边界
     const int nMinCellY = max(0,(int)floor((y-mnMinY-factorY)*mfGridElementHeightInv));
     if(nMinCellY>=FRAME_GRID_ROWS)
     {
         return vIndices;
     }
-
+	// 下边界
     const int nMaxCellY = min((int)FRAME_GRID_ROWS-1,(int)ceil((y-mnMinY+factorY)*mfGridElementHeightInv));
     if(nMaxCellY<0)
     {
@@ -702,21 +716,26 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
     }
 
     const bool bCheckLevels = (minLevel>0) || (maxLevel>=0);
-
+	// 遍历网格左到右
     for(int ix = nMinCellX; ix<=nMaxCellX; ix++)
     {
+		// 遍历网格上到下
         for(int iy = nMinCellY; iy<=nMaxCellY; iy++)
         {
+			// 取出cell中特征点集合的索引
             const vector<size_t> vCell = (!bRight) ? mGrid[ix][iy] : mGridRight[ix][iy];
+			// cell内无特征点 跳过
             if(vCell.empty())
                 continue;
-
+			// 遍历cell内特征点
             for(size_t j=0, jend=vCell.size(); j<jend; j++)
             {
+				// 引用特征点
                 const cv::KeyPoint &kpUn = (Nleft == -1) ? mvKeysUn[vCell[j]]
                                                          : (!bRight) ? mvKeys[vCell[j]]
                                                                      : mvKeysRight[vCell[j]];
-                if(bCheckLevels)
+                // 限定金字塔图层，保证在[minLevel,maxLevel]之间
+				if(bCheckLevels)
                 {
                     if(kpUn.octave<minLevel)
                         continue;
@@ -724,10 +743,10 @@ vector<size_t> Frame::GetFeaturesInArea(const float &x, const float  &y, const f
                         if(kpUn.octave>maxLevel)
                             continue;
                 }
-
+				// 计算特征点与搜索圆心的距离
                 const float distx = kpUn.pt.x-x;
                 const float disty = kpUn.pt.y-y;
-
+				// 在搜索圆内 记录特征点
                 if(fabs(distx)<factorX && fabs(disty)<factorY)
                     vIndices.push_back(vCell[j]);
             }

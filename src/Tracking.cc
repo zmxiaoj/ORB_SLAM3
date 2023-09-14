@@ -2592,17 +2592,20 @@ void Tracking::MonocularInitialization()
         }
     }
 }
-
+/**
+ * @brief 单目相机成功初始化后用三角化得到的点生成MapPoints
+ */
 void Tracking::CreateInitialMapMonocular()
 {
     // Create KeyFrames
+	// 单目初始化 将参考帧和当前帧全作为关键帧
     KeyFrame* pKFini = new KeyFrame(mInitialFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
     KeyFrame* pKFcur = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
 
     if(mSensor == System::IMU_MONOCULAR)
         pKFini->mpImuPreintegrated = (IMU::Preintegrated*)(NULL);
 
-
+	// 计算关键帧词袋
     pKFini->ComputeBoW();
     pKFcur->ComputeBoW();
 

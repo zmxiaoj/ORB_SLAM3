@@ -645,79 +645,102 @@ namespace ORB_SLAM3
         return nmatches;
     }
 
+    /**
+     * @brief 单目初始化用于参考帧和当前帧特征点匹配
+     * @param[in] F1 初始化参考帧
+     * @param[in] F2 当前帧
+     * @param[in out] vbPrevMatched 参考帧的特征点坐标->更新为匹配好的当前帧特征点坐标
+     * @param[in out] vnMatches12 index保存F1对应特征点索引 值为匹配好的F2特征点索引
+     * @param[in] windowSize 搜索窗口
+     */
     int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f> &vbPrevMatched, vector<int> &vnMatches12, int windowSize)
     {
         int nmatches=0;
+        // 1到2的匹配，按F1分配匹配关系，初始化为-1
         vnMatches12 = vector<int>(F1.mvKeysUn.size(),-1);
-
+        // 构建旋转直方图
         vector<int> rotHist[HISTO_LENGTH];
         for(int i=0;i<HISTO_LENGTH;i++)
             rotHist[i].reserve(500);
+        // 直方图系数
         const float factor = 1.0f/HISTO_LENGTH;
-
+        // 匹配点对距离，按F2分配，初始化为INT_MAX
         vector<int> vMatchedDistance(F2.mvKeysUn.size(),INT_MAX);
+        // 2到1的匹配，按F2分配匹配关系，初始化为-1
         vector<int> vnMatches21(F2.mvKeysUn.size(),-1);
-
+        // 遍历F1中特征点
         for(size_t i1=0, iend1=F1.mvKeysUn.size(); i1<iend1; i1++)
         {
             cv::KeyPoint kp1 = F1.mvKeysUn[i1];
             int level1 = kp1.octave;
+            // 只在原始图像(第0层)上处理
             if(level1>0)
                 continue;
-
+            // 在F2窗口中搜索特征点(初始化时运动不确定设置窗口较大)
             vector<size_t> vIndices2 = F2.GetFeaturesInArea(vbPrevMatched[i1].x,vbPrevMatched[i1].y, windowSize,level1,level1);
-
+            // 无特征点 跳过
             if(vIndices2.empty())
                 continue;
-
+            // 取出F1当前特征点的描述子
             cv::Mat d1 = F1.mDescriptors.row(i1);
 
             int bestDist = INT_MAX;
             int bestDist2 = INT_MAX;
             int bestIdx2 = -1;
-
+            // 遍历选出F2搜索区域中特征点
             for(vector<size_t>::iterator vit=vIndices2.begin(); vit!=vIndices2.end(); vit++)
             {
                 size_t i2 = *vit;
-
+                // 取出F2特征点的描述子
                 cv::Mat d2 = F2.mDescriptors.row(i2);
-
+                // 计算两个特征点描述子间距离
                 int dist = DescriptorDistance(d1,d2);
 
                 if(vMatchedDistance[i2]<=dist)
                     continue;
-
+                // 小于最佳距离
                 if(dist<bestDist)
                 {
+                    // 更新次佳距离
                     bestDist2=bestDist;
+                    // 更新最佳距离
                     bestDist=dist;
+                    // 记录最佳索引
                     bestIdx2=i2;
                 }
+                // 大于最佳 小于次佳
                 else if(dist<bestDist2)
                 {
+                    // 更新次佳
                     bestDist2=dist;
                 }
             }
-
+            // 最佳距离小于阈值
             if(bestDist<=TH_LOW)
             {
+                // 最佳 < 次佳 * 系数(mathcer构造时设定，初始化时系数较高)
                 if(bestDist<(float)bestDist2*mfNNratio)
                 {
+                    // 如果2到1的匹配已经存在，说明发生重复匹配，将原匹配删除
                     if(vnMatches21[bestIdx2]>=0)
                     {
                         vnMatches12[vnMatches21[bestIdx2]]=-1;
                         nmatches--;
                     }
+                    // 双向更新1到2 2到1匹配 i1找到最佳匹配bestIdx2
                     vnMatches12[i1]=bestIdx2;
                     vnMatches21[bestIdx2]=i1;
                     vMatchedDistance[bestIdx2]=bestDist;
                     nmatches++;
-
+                    // 计算匹配点旋转角度差所在直方图
                     if(mbCheckOrientation)
                     {
+                        // 计算匹配特征点角度差(°)
                         float rot = F1.mvKeysUn[i1].angle-F2.mvKeysUn[bestIdx2].angle;
                         if(rot<0.0)
                             rot+=360.0f;
+                        // 分配到第bin个Hist
+                        // ?只使用12个
                         int bin = round(rot*factor);
                         if(bin==HISTO_LENGTH)
                             bin=0;
@@ -728,19 +751,20 @@ namespace ORB_SLAM3
             }
 
         }
-
+        // 筛除旋转直方图中“非主流”部分
         if(mbCheckOrientation)
         {
             int ind1=-1;
             int ind2=-1;
             int ind3=-1;
-
+            // 筛选出在旋转角度差落在在直方图区间内数量最多的前三个bin的索引
             ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3);
-
+            // 遍历直方图
             for(int i=0; i<HISTO_LENGTH; i++)
             {
                 if(i==ind1 || i==ind2 || i==ind3)
                     continue;
+                // 删除非前三匹配
                 for(size_t j=0, jend=rotHist[i].size(); j<jend; j++)
                 {
                     int idx1 = rotHist[i][j];
@@ -755,6 +779,7 @@ namespace ORB_SLAM3
         }
 
         //Update prev matched
+        // 将筛选过的匹配保存到vbPrevMatched
         for(size_t i1=0, iend1=vnMatches12.size(); i1<iend1; i1++)
             if(vnMatches12[i1]>=0)
                 vbPrevMatched[i1]=F2.mvKeysUn[vnMatches12[i1]].pt;
@@ -2008,16 +2033,25 @@ namespace ORB_SLAM3
 
         return nmatches;
     }
-
+    /**
+     * @brief 筛选出在旋转角度差落在在直方图区间内数量最多的前三个bin的索引
+     *
+     * @param[in] histo         匹配特征点对旋转方向差直方图
+     * @param[in] L             直方图尺寸
+     * @param[in & out] ind1          bin值第一大对应的索引
+     * @param[in & out] ind2          bin值第二大对应的索引
+     * @param[in & out] ind3          bin值第三大对应的索引
+     */
     void ORBmatcher::ComputeThreeMaxima(vector<int>* histo, const int L, int &ind1, int &ind2, int &ind3)
     {
         int max1=0;
         int max2=0;
         int max3=0;
-
+        // 遍历直方图
         for(int i=0; i<L; i++)
         {
             const int s = histo[i].size();
+            // max1 < s
             if(s>max1)
             {
                 max3=max2;
@@ -2027,6 +2061,7 @@ namespace ORB_SLAM3
                 ind2=ind1;
                 ind1=i;
             }
+            // max2 < s < max1
             else if(s>max2)
             {
                 max3=max2;
@@ -2034,13 +2069,14 @@ namespace ORB_SLAM3
                 ind3=ind2;
                 ind2=i;
             }
+            // max3 < s < max2
             else if(s>max3)
             {
                 max3=s;
                 ind3=i;
             }
         }
-
+        // max2 max3 与 max1 差距过大，直接放弃
         if(max2<0.1f*(float)max1)
         {
             ind2=-1;
@@ -2055,6 +2091,9 @@ namespace ORB_SLAM3
 
 // Bit set count operation from
 // http://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
+    /**
+     * @brief 计算两个描述子之间的距离
+     */
     int ORBmatcher::DescriptorDistance(const cv::Mat &a, const cv::Mat &b)
     {
         const int *pa = a.ptr<int32_t>();

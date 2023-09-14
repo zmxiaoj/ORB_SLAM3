@@ -76,6 +76,7 @@ namespace ORB_SLAM3
 	 * @brief 计算特征点对应的方向
 	 * 使提取的特征点具有旋转不变性
 	 * 灰度质心法：几何中心和灰度质心的连线作为特征点方向
+	 * return 角度
 	 */
     static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
     {

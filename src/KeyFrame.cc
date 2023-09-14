@@ -41,7 +41,12 @@ KeyFrame::KeyFrame():
 {
 
 }
-
+/**
+ * @brief 关键帧构造函数
+ * @param F 构造关键帧的一帧
+ * @param pMap 地图
+ * @param pKFDB 关键帧库
+ */
 KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     bImu(pMap->isImuInitialized()), mnFrameId(F.mnId),  mTimeStamp(F.mTimeStamp), mnGridCols(FRAME_GRID_COLS), mnGridRows(FRAME_GRID_ROWS),
     mfGridElementWidthInv(F.mfGridElementWidthInv), mfGridElementHeightInv(F.mfGridElementHeightInv),
@@ -61,10 +66,12 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     mvLeftToRightMatch(F.mvLeftToRightMatch),mvRightToLeftMatch(F.mvRightToLeftMatch), mTlr(F.GetRelativePoseTlr()),
     mvKeysRight(F.mvKeysRight), NLeft(F.Nleft), NRight(F.Nright), mTrl(F.GetRelativePoseTrl()), mnNumberOfOpt(0), mbHasVelocity(false)
 {
+	// 记录ID
     mnId=nNextId++;
 
     mGrid.resize(mnGridCols);
     if(F.Nleft != -1)  mGridRight.resize(mnGridCols);
+	// 遍历网格列、行 将帧的特征点信息保存到关键帧中
     for(int i=0; i<mnGridCols;i++)
     {
         mGrid[i].resize(mnGridRows);
@@ -98,8 +105,10 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
 
 void KeyFrame::ComputeBoW()
 {
+	// 只有当词袋向量或者节点和特征序号的特征向量为空的时候执行
     if(mBowVec.empty() || mFeatVec.empty())
     {
+		// 将描述子矩阵转换为描述子向量
         vector<cv::Mat> vCurrentDesc = Converter::toDescriptorVector(mDescriptors);
         // Feature vector associate features with nodes in the 4th level (from leaves up)
         // We assume the vocabulary tree has 6 levels, change the 4 otherwise
