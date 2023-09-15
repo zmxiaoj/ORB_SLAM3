@@ -2610,9 +2610,10 @@ void Tracking::CreateInitialMapMonocular()
     pKFcur->ComputeBoW();
 
     // Insert KFs in the map
+	// 将关键帧插入地图
     mpAtlas->AddKeyFrame(pKFini);
     mpAtlas->AddKeyFrame(pKFcur);
-
+	// 遍历初始化匹配 用初始化得到的3D点来生成地图点MapPoints
     for(size_t i=0; i<mvIniMatches.size();i++)
     {
         if(mvIniMatches[i]<0)
@@ -2622,17 +2623,20 @@ void Tracking::CreateInitialMapMonocular()
         Eigen::Vector3f worldPos;
         worldPos << mvIniP3D[i].x, mvIniP3D[i].y, mvIniP3D[i].z;
         MapPoint* pMP = new MapPoint(worldPos,pKFcur,mpAtlas->GetCurrentMap());
-
+		// 关联KeyFrame的2D特征点和对应3D地图点
         pKFini->AddMapPoint(pMP,i);
         pKFcur->AddMapPoint(pMP,mvIniMatches[i]);
-
+		// 添加MapPoint被KeyFrame中哪些特征点观测属性
         pMP->AddObservation(pKFini,i);
         pMP->AddObservation(pKFcur,mvIniMatches[i]);
-
+	    // 从观测到该MapPoint的特征点中挑选最有代表性的描述子
         pMP->ComputeDistinctiveDescriptors();
+	    // 更新该MapPoint平均观测方向以及观测距离的范围
         pMP->UpdateNormalAndDepth();
 
         //Fill Current Frame structure
+		// mvIniMatches下标i表示在初始化参考帧中的特征点的序号
+		// mvIniMatches[i]是初始化当前帧中的特征点的序号
         mCurrentFrame.mvpMapPoints[mvIniMatches[i]] = pMP;
         mCurrentFrame.mvbOutlier[mvIniMatches[i]] = false;
 
@@ -2642,6 +2646,8 @@ void Tracking::CreateInitialMapMonocular()
 
 
     // Update Connections
+	// 更新关键帧间的连接关系
+	// 在3D点和关键帧之间建立边，每个边有一个权重，边的权重是该关键帧与当前帧公共3D点的个数
     pKFini->UpdateConnections();
     pKFcur->UpdateConnections();
 
@@ -2650,15 +2656,17 @@ void Tracking::CreateInitialMapMonocular()
 
     // Bundle Adjustment
     Verbose::PrintMess("New Map created with " + to_string(mpAtlas->MapPointsInMap()) + " points", Verbose::VERBOSITY_QUIET);
-    Optimizer::GlobalBundleAdjustemnt(mpAtlas->GetCurrentMap(),20);
-
+    // todo 全局BA，同时优化全部位姿和三维点
+	Optimizer::GlobalBundleAdjustemnt(mpAtlas->GetCurrentMap(),20);
+	// 取场景的中值深度，用于尺度归一化
     float medianDepth = pKFini->ComputeSceneMedianDepth(2);
+	// 1/Z
     float invMedianDepth;
     if(mSensor == System::IMU_MONOCULAR)
         invMedianDepth = 4.0f/medianDepth; // 4.0f
     else
         invMedianDepth = 1.0f/medianDepth;
-
+	// 平均深度要 > 0 且 在当前帧中被观测到的地图点的数目应该 >= 50
     if(medianDepth<0 || pKFcur->TrackedMapPoints(1)<50) // TODO Check, originally 100 tracks
     {
         Verbose::PrintMess("Wrong initialization, reseting...", Verbose::VERBOSITY_QUIET);
@@ -2667,17 +2675,22 @@ void Tracking::CreateInitialMapMonocular()
     }
 
     // Scale initial baseline
+	// 将两帧之间的变换归一化到平均深度1的尺度下
     Sophus::SE3f Tc2w = pKFcur->GetPose();
+	// 将平移归一化 X/Z Y/Z 1
     Tc2w.translation() *= invMedianDepth;
     pKFcur->SetPose(Tc2w);
 
     // Scale points
+	// 把3D点的尺度也归一化到1
+	// pKFini pKFcur对应相同3D点
     vector<MapPoint*> vpAllMapPoints = pKFini->GetMapPointMatches();
     for(size_t iMP=0; iMP<vpAllMapPoints.size(); iMP++)
     {
         if(vpAllMapPoints[iMP])
         {
             MapPoint* pMP = vpAllMapPoints[iMP];
+			// x/Z y/Z z/Z
             pMP->SetWorldPos(pMP->GetWorldPos()*invMedianDepth);
             pMP->UpdateNormalAndDepth();
         }
@@ -2692,11 +2705,12 @@ void Tracking::CreateInitialMapMonocular()
         mpImuPreintegratedFromLastKF = new IMU::Preintegrated(pKFcur->mpImuPreintegrated->GetUpdatedBias(),pKFcur->mImuCalib);
     }
 
-
+	// 将关键帧插入局部地图
     mpLocalMapper->InsertKeyFrame(pKFini);
     mpLocalMapper->InsertKeyFrame(pKFcur);
+	// 设定局部地图的初始化时间戳
     mpLocalMapper->mFirstTs=pKFcur->mTimeStamp;
-
+	// 更新归一化后的位姿
     mCurrentFrame.SetPose(pKFcur->GetPose());
     mnLastKeyFrameId=mCurrentFrame.mnId;
     mpLastKeyFrame = pKFcur;
@@ -2704,30 +2718,33 @@ void Tracking::CreateInitialMapMonocular()
 
     mvpLocalKeyFrames.push_back(pKFcur);
     mvpLocalKeyFrames.push_back(pKFini);
+	// 更新局部地图点
     mvpLocalMapPoints=mpAtlas->GetAllMapPoints();
     mpReferenceKF = pKFcur;
+	// 当前帧的参考关键帧是 当前关键帧
     mCurrentFrame.mpReferenceKF = pKFcur;
 
     // Compute here initial velocity
     vector<KeyFrame*> vKFs = mpAtlas->GetAllKeyFrames();
-
+	// 头关键帧到尾关键帧的位姿变换T
     Sophus::SE3f deltaT = vKFs.back()->GetPose() * vKFs.front()->GetPoseInverse();
     mbVelocity = false;
+	// 取出T中旋转的3维表示
     Eigen::Vector3f phi = deltaT.so3().log();
-
+	// (第二帧 - 第一帧)/(第二帧 - 第一帧)
     double aux = (mCurrentFrame.mTimeStamp-mLastFrame.mTimeStamp)/(mCurrentFrame.mTimeStamp-mInitialFrame.mTimeStamp);
     phi *= aux;
-
+	// 将上一帧更新为当前帧
     mLastFrame = Frame(mCurrentFrame);
-
+	// 设置参考地图点
     mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);
-
+	// 设置MapDrawer的当前相机位姿
     mpMapDrawer->SetCurrentCameraPose(pKFcur->GetPose());
-
+	// 更新初始关键帧
     mpAtlas->GetCurrentMap()->mvpKeyFrameOrigins.push_back(pKFini);
-
+	// 初始化成功，更新状态
     mState=OK;
-
+	// 更新初始化帧ID
     initID = pKFcur->mnId;
 }
 

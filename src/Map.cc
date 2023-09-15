@@ -56,10 +56,11 @@ Map::~Map()
     mvpReferenceMapPoints.clear();
     mvpKeyFrameOrigins.clear();
 }
-
+// 在地图中插入关键帧，更新关键帧的最大id
 void Map::AddKeyFrame(KeyFrame *pKF)
 {
     unique_lock<mutex> lock(mMutexMap);
+	// 如果是第一个关键帧
     if(mspKeyFrames.empty()){
         cout << "First KF:" << pKF->mnId << "; Map init KF:" << mnInitKFid << endl;
         mnInitKFid = pKF->mnId;
@@ -67,6 +68,7 @@ void Map::AddKeyFrame(KeyFrame *pKF)
         mpKFlowerID = pKF;
     }
     mspKeyFrames.insert(pKF);
+	// 更新最大关键帧id
     if(pKF->mnId>mnMaxKFid)
     {
         mnMaxKFid=pKF->mnId;

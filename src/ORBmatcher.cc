@@ -663,6 +663,7 @@ namespace ORB_SLAM3
         for(int i=0;i<HISTO_LENGTH;i++)
             rotHist[i].reserve(500);
         // 直方图系数
+		// ？系数调整，直方图均匀分配
         const float factor = 1.0f/HISTO_LENGTH;
         // 匹配点对距离，按F2分配，初始化为INT_MAX
         vector<int> vMatchedDistance(F2.mvKeysUn.size(),INT_MAX);
@@ -2093,6 +2094,9 @@ namespace ORB_SLAM3
 // http://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
     /**
      * @brief 计算两个描述子之间的距离
+     * @param a
+     * @param b
+     * @return 距离
      */
     int ORBmatcher::DescriptorDistance(const cv::Mat &a, const cv::Mat &b)
     {

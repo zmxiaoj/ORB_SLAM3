@@ -48,15 +48,36 @@ bool sortByVal(const pair<MapPoint*, int> &a, const pair<MapPoint*, int> &b)
 {
     return (a.second < b.second);
 }
-
+/**
+ * @brief 全局BA： pMap中所有的MapPoints和关键帧做bundle adjustment优化
+ * 这个全局BA优化在本程序中有两个地方使用：
+ * 1、单目初始化：CreateInitialMapMonocular函数
+ * 2、闭环优化：RunGlobalBundleAdjustment函数
+ * @param[in] pMap                  地图点
+ * @param[in] nIterations           迭代次数
+ * @param[in] pbStopFlag            外部控制BA结束标志(default=NULL)
+ * @param[in] nLoopKF               形成了闭环的当前关键帧的id(default=0)
+ * @param[in] bRobust               是否使用鲁棒核函数(default=true)
+ */
 void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
 {
+	// 获取地图中的所有关键帧
     vector<KeyFrame*> vpKFs = pMap->GetAllKeyFrames();
+	// 获取地图中的所有地图点
     vector<MapPoint*> vpMP = pMap->GetAllMapPoints();
+	// 调用GBA
     BundleAdjustment(vpKFs,vpMP,nIterations,pbStopFlag, nLoopKF, bRobust);
 }
 
-
+/**
+ * @brief bundle adjustment 优化过程
+ * @param[in] vpKFs                 参与BA的所有关键帧
+ * @param[in] vpMP                  参与BA的所有地图点
+ * @param[in] nIterations           优化迭代次数
+ * @param[in] pbStopFlag            外部控制BA结束标志
+ * @param[in] nLoopKF               形成了闭环的当前关键帧的id
+ * @param[in] bRobust               是否使用核函数
+ */
 void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<MapPoint *> &vpMP,
                                  int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
 {
