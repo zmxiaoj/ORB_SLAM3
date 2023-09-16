@@ -2658,7 +2658,7 @@ void Tracking::CreateInitialMapMonocular()
     Verbose::PrintMess("New Map created with " + to_string(mpAtlas->MapPointsInMap()) + " points", Verbose::VERBOSITY_QUIET);
     // todo 全局BA，同时优化全部位姿和三维点
 	Optimizer::GlobalBundleAdjustemnt(mpAtlas->GetCurrentMap(),20);
-	// 取场景的中值深度，用于尺度归一化
+	// 取场景的中值(第1/2)深度，用于尺度归一化
     float medianDepth = pKFini->ComputeSceneMedianDepth(2);
 	// 1/Z
     float invMedianDepth;

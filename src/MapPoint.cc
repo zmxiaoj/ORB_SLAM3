@@ -164,6 +164,7 @@ void MapPoint::AddObservation(KeyFrame* pKF, int idx)
         indexes = tuple<int,int>(-1,-1);
     }
 	// 左目图像存在特征点 且 索引超过左目特征点数
+	// 保存在右目图像
     if(pKF -> NLeft != -1 && idx >= pKF -> NLeft){
         get<1>(indexes) = idx;
     }
@@ -173,7 +174,7 @@ void MapPoint::AddObservation(KeyFrame* pKF, int idx)
 	// 更新能观测到该MapPoint的KF和该MapPoint在KF中的索引
     mObservations[pKF]=indexes;
 	// 更新观测相机数
-	// 不是多相机 且 存在右目相机
+	// 不是(KannalaBrandt8模型存在右目相机模型) 且 存在右目相机
     if(!pKF->mpCamera2 && pKF->mvuRight[idx]>=0)
         nObs+=2;
     else

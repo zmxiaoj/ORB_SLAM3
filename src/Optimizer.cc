@@ -81,27 +81,31 @@ void Optimizer::GlobalBundleAdjustemnt(Map* pMap, int nIterations, bool* pbStopF
 void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<MapPoint *> &vpMP,
                                  int nIterations, bool* pbStopFlag, const unsigned long nLoopKF, const bool bRobust)
 {
+	// 不参与优化的地图点
     vector<bool> vbNotIncludedMP;
     vbNotIncludedMP.resize(vpMP.size());
 
     Map* pMap = vpKFs[0]->GetMap();
-
+	// 初始化g2o
+	// 创建稀疏优化器
     g2o::SparseOptimizer optimizer;
+	// 创建线性求解器
     g2o::BlockSolver_6_3::LinearSolverType * linearSolver;
 
     linearSolver = new g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>();
-
+	// 创建块求解器并用线性求解器初始化
     g2o::BlockSolver_6_3 * solver_ptr = new g2o::BlockSolver_6_3(linearSolver);
-
+	// 创建总求解器 LM方法
     g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
+	// 用定义好的求解器作为稀疏优化器的求解方法
     optimizer.setAlgorithm(solver);
     optimizer.setVerbose(false);
-
+	// 外部控制停止 执行后，外部无法请求结束BA
     if(pbStopFlag)
         optimizer.setForceStopFlag(pbStopFlag);
-
+	// 记录添加到优化器中的顶点的最大关键帧id
     long unsigned int maxKFid = 0;
-
+	// 预计大小 关键帧数 * 地图点数
     const int nExpectedSize = (vpKFs.size())*vpMP.size();
 
     vector<ORB_SLAM3::EdgeSE3ProjectXYZ*> vpEdgesMono;
@@ -133,51 +137,74 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
 
 
     // Set KeyFrame vertices
-
+	// 向优化器添加关键帧位姿顶点
     for(size_t i=0; i<vpKFs.size(); i++)
     {
         KeyFrame* pKF = vpKFs[i];
         if(pKF->isBad())
             continue;
+		// 创建关键帧位姿顶点
         g2o::VertexSE3Expmap * vSE3 = new g2o::VertexSE3Expmap();
+		// 取出关键帧的位姿
         Sophus::SE3<float> Tcw = pKF->GetPose();
+		// 更新测量值
         vSE3->setEstimate(g2o::SE3Quat(Tcw.unit_quaternion().cast<double>(),Tcw.translation().cast<double>()));
-        vSE3->setId(pKF->mnId);
+        // 设置关键帧ID
+		vSE3->setId(pKF->mnId);
+		// 固定第0帧(地图初始关键帧)不进行优化(参考基准)
         vSE3->setFixed(pKF->mnId==pMap->GetInitKFid());
+		// 将顶点添加到优化器中
         optimizer.addVertex(vSE3);
+		// 更新最大关键帧id
         if(pKF->mnId>maxKFid)
             maxKFid=pKF->mnId;
     }
-
-    const float thHuber2D = sqrt(5.99);
-    const float thHuber3D = sqrt(7.815);
+	// Huber核函数阈值
+	// 卡方分布 95% 以上可信度的时候的阈值
+    const float thHuber2D = sqrt(5.99); // 2自由度
+    const float thHuber3D = sqrt(7.815);// 3自由度
 
     // Set MapPoint vertices
+	// 向优化器添加地图点顶点
     for(size_t i=0; i<vpMP.size(); i++)
     {
         MapPoint* pMP = vpMP[i];
         if(pMP->isBad())
             continue;
+		// 创建地图点位姿顶点
         g2o::VertexSBAPointXYZ* vPoint = new g2o::VertexSBAPointXYZ();
+		// 设置测量值
         vPoint->setEstimate(pMP->GetWorldPos().cast<double>());
+		// 在maxKFid基础上记录地图点id
         const int id = pMP->mnId+maxKFid+1;
         vPoint->setId(id);
+		// 地图点设置边缘化
+	    // g2o在做BA的优化时必须将其所有地图点全部schur掉，否则会出错。
+	    // 原因是使用了g2o::LinearSolver<BalBlockSolver::PoseMatrixType>这个类型来指定linearsolver,
+	    // 其中模板参数当中的位姿矩阵类型在程序中为相机姿态参数的维度，于是BA当中schur消元后解得线性方程组必须是只含有相机姿态变量。
+	    // Ceres库没有这样的限制
         vPoint->setMarginalized(true);
+		// 添加节点到优化器
         optimizer.addVertex(vPoint);
-
-       const map<KeyFrame*,tuple<int,int>> observations = pMP->GetObservations();
+		// 取出地图点的观测信息
+        const map<KeyFrame*,tuple<int,int>> observations = pMP->GetObservations();
 
         int nEdges = 0;
         //SET EDGES
+		// 设置边的关系 遍历地图点的观测
         for(map<KeyFrame*,tuple<int,int>>::const_iterator mit=observations.begin(); mit!=observations.end(); mit++)
         {
+			// 取出关键帧
             KeyFrame* pKF = mit->first;
+			// 过滤非法情况
             if(pKF->isBad() || pKF->mnId>maxKFid)
                 continue;
+			// 不存在地图点顶点或关键帧顶点
             if(optimizer.vertex(id) == NULL || optimizer.vertex(pKF->mnId) == NULL)
                 continue;
+			// 边计数增加
             nEdges++;
-
+			// 单目(左目)对观测数据
             const int leftIndex = get<0>(mit->second);
 
             if(leftIndex != -1 && pKF->mvuRight[get<0>(mit->second)]<0)
@@ -210,6 +237,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                 vpEdgeKFMono.push_back(pKF);
                 vpMapPointEdgeMono.push_back(pMP);
             }
+			// 双目观测
             else if(leftIndex != -1 && pKF->mvuRight[leftIndex] >= 0) //Stereo observation
             {
                 const cv::KeyPoint &kpUn = pKF->mvKeysUn[leftIndex];
@@ -246,7 +274,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
                 vpEdgeKFStereo.push_back(pKF);
                 vpMapPointEdgeStereo.push_back(pMP);
             }
-
+			// KannalaBrandt8模型存在右目相机模型
             if(pKF->mpCamera2){
                 int rightIndex = get<1>(mit->second);
 
@@ -283,8 +311,8 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
         }
 
 
-
-        if(nEdges==0)
+	    // 如果无关键帧观测到当前地图点，删除掉这个顶点，并且这个地图点也就不参与优化
+	    if(nEdges==0)
         {
             optimizer.removeVertex(vPoint);
             vbNotIncludedMP[i]=true;
@@ -296,6 +324,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs, const vector<M
     }
 
     // Optimize!
+	// 开始优化
     optimizer.setVerbose(false);
     optimizer.initializeOptimization();
     optimizer.optimize(nIterations);

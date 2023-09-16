@@ -502,6 +502,7 @@ protected:
     std::mutex mMutexMap;
 
 public:
+	// mpCamera2 用于KannalaBrandt8相机模型 单目为空指针 双目为右目相机模型
     GeometricCamera* mpCamera, *mpCamera2;
 
     //Indexes of stereo observations correspondences
