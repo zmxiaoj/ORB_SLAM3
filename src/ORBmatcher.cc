@@ -219,23 +219,33 @@ namespace ORB_SLAM3
         else
             return 4.0;
     }
-
+    /**
+     * @brief 通过词袋对关键帧和普通帧的特征点进行跟踪
+     * @param pKF 关键帧
+     * @param F 当前普通帧
+     * @param vpMapPointMatches F中地图点对应的匹配，NULL表示未匹配
+     * @return 成功匹配数目
+     */
     int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPointMatches)
     {
+        // 获取关键帧地图点
         const vector<MapPoint*> vpMapPointsKF = pKF->GetMapPointMatches();
-
+        // 根据普通帧特征点数目初始化地图点匹配vector
         vpMapPointMatches = vector<MapPoint*>(F.N,static_cast<MapPoint*>(NULL));
-
+        // 获取关键帧的 FeatureVector
         const DBoW2::FeatureVector &vFeatVecKF = pKF->mFeatVec;
 
         int nmatches=0;
-
+        // 构建统计特征点角度直方图
         vector<int> rotHist[HISTO_LENGTH];
         for(int i=0;i<HISTO_LENGTH;i++)
             rotHist[i].reserve(500);
         const float factor = 1.0f/HISTO_LENGTH;
 
         // We perform the matching over ORB that belong to the same vocabulary node (at a certain level)
+        // 将属于同一节点(特定层)的ORB特征进行匹配
+        // FeatureVector 是 map
+        // FeatureVector[i]->first 节点id FeatureVector[i]->second vector 属于节点的特征点索引
         DBoW2::FeatureVector::const_iterator KFit = vFeatVecKF.begin();
         DBoW2::FeatureVector::const_iterator Fit = F.mFeatVec.begin();
         DBoW2::FeatureVector::const_iterator KFend = vFeatVecKF.end();
@@ -243,23 +253,25 @@ namespace ORB_SLAM3
 
         while(KFit != KFend && Fit != Fend)
         {
+            // 找到同属于一个节点的特征点
             if(KFit->first == Fit->first)
             {
+                // 节点内所有特征点在图像中的索引集合
                 const vector<unsigned int> vIndicesKF = KFit->second;
                 const vector<unsigned int> vIndicesF = Fit->second;
-
+                // 遍历关键帧中属于该节点的特征点索引集合
                 for(size_t iKF=0; iKF<vIndicesKF.size(); iKF++)
                 {
                     const unsigned int realIdxKF = vIndicesKF[iKF];
-
+                    // 取出关键帧中特征点对应的地图点
                     MapPoint* pMP = vpMapPointsKF[realIdxKF];
-
+                    // 检查地图点
                     if(!pMP)
                         continue;
 
                     if(pMP->isBad())
                         continue;
-
+                    // 取出关键帧中特征点对应的描述子
                     const cv::Mat &dKF= pKF->mDescriptors.row(realIdxKF);
 
                     int bestDist1=256;
@@ -269,30 +281,35 @@ namespace ORB_SLAM3
                     int bestDist1R=256;
                     int bestIdxFR =-1 ;
                     int bestDist2R=256;
-
+                    // 遍历普通帧中属于该节点的特征点索引集合
                     for(size_t iF=0; iF<vIndicesF.size(); iF++)
                     {
+                        // 单目(非双目或RGBD)
                         if(F.Nleft == -1){
+                            // 普通帧该节点中特征点的索引
                             const unsigned int realIdxF = vIndicesF[iF];
-
+                            // 如果该地图点已经被匹配 则跳过 加速
                             if(vpMapPointMatches[realIdxF])
                                 continue;
-
+                            // 取出普通帧F中该特征对应的描述子
                             const cv::Mat &dF = F.mDescriptors.row(realIdxF);
-
-                            const int dist =  DescriptorDistance(dKF,dF);
-
+                            // 计算关键帧特征点描述子间的距离
+                            const int dist = DescriptorDistance(dKF,dF);
+                            // 更新最优距离 最优索引 次优距离
+                            // dist < bestDist1 < bestDist2
                             if(dist<bestDist1)
                             {
                                 bestDist2=bestDist1;
                                 bestDist1=dist;
                                 bestIdxF=realIdxF;
                             }
+                            // bestDist1 < dist < bestDist2
                             else if(dist<bestDist2)
                             {
                                 bestDist2=dist;
                             }
                         }
+                        // 双目或RGBD情况
                         else{
                             const unsigned int realIdxF = vIndicesF[iF];
 
@@ -323,20 +340,24 @@ namespace ORB_SLAM3
                         }
 
                     }
-
+                    // 最佳距离 <= 阈值
                     if(bestDist1<=TH_LOW)
                     {
+                        // 检验最佳距离与次佳距离的关系
+                        // 最佳距离 < 次佳距离 * 系数
                         if(static_cast<float>(bestDist1)<mfNNratio*static_cast<float>(bestDist2))
                         {
+                            // 找到成功匹配对应的地图点(来自关键帧)
                             vpMapPointMatches[bestIdxF]=pMP;
-
+                            // 取出关键帧对应的特征点坐标
                             const cv::KeyPoint &kp =
                                     (!pKF->mpCamera2) ? pKF->mvKeysUn[realIdxKF] :
                                     (realIdxKF >= pKF -> NLeft) ? pKF -> mvKeysRight[realIdxKF - pKF -> NLeft]
                                                                 : pKF -> mvKeys[realIdxKF];
-
+                            // 检查方向
                             if(mbCheckOrientation)
                             {
+                                // 普通帧对应的特征点坐标
                                 cv::KeyPoint &Fkp =
                                         (!pKF->mpCamera2 || F.Nleft == -1) ? F.mvKeys[bestIdxF] :
                                         (bestIdxF >= F.Nleft) ? F.mvKeysRight[bestIdxF - F.Nleft]
@@ -353,7 +374,7 @@ namespace ORB_SLAM3
                             }
                             nmatches++;
                         }
-
+                        // 双目或RGBD
                         if(bestDist1R<=TH_LOW)
                         {
                             if(static_cast<float>(bestDist1R)<mfNNratio*static_cast<float>(bestDist2R) || true)
@@ -393,14 +414,17 @@ namespace ORB_SLAM3
             }
             else if(KFit->first < Fit->first)
             {
+                // 对齐KFit 和 Fit
+                // 找到 >= Fit节点id 的迭代器
                 KFit = vFeatVecKF.lower_bound(Fit->first);
             }
             else
             {
+                // 对齐KFit 和 Fit
                 Fit = F.mFeatVec.lower_bound(KFit->first);
             }
         }
-
+        // 检验匹配点的方向
         if(mbCheckOrientation)
         {
             int ind1=-1;

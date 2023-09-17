@@ -1912,8 +1912,7 @@ void Tracking::Track()
 
     // Get Map Mutex -> Map cannot be changed
 	// 地图更新时加锁 保证地图不会发生变化
-	// 是否影响地图的实时更新?
-	// 主要耗时在构造帧中特征点的提取和匹配部分,在那个时候地图是没有被上锁的,有足够的时间更新地图
+	// 是否影响地图的实时更新? 主要耗时在构造帧中特征点的提取和匹配部分,在那个时候地图是没有被上锁的,有足够的时间更新地图
 	unique_lock<mutex> lock(pCurrentMap->mMutexMapUpdate);
 
     mbMapUpdated = false;
@@ -1979,19 +1978,25 @@ void Tracking::Track()
             if(mState==OK)
             {
                 // Local Mapping might have changed some MapPoints tracked in last frame
+	            // 局部建图线程可能会对原有的地图点进行替换 进行检查
+	            // 检查并更新上一帧被替换的MapPoints
                 CheckReplacedInLastFrame();
-				// (无速度且IMU未初始化) 或 (当前帧的id小于最近完成重定位帧id+2 -> 刚刚完成重定位)
+				// (速度模型为空且IMU未初始化) 或 (当前帧的id小于最近完成重定位帧id+2 -> 刚刚完成重定位)
+	            // 1.如果速度模型为空并且imu未初始化，说明是刚开始第一帧跟踪或已经跟丢了
+	            // 2.如果当前帧紧紧地跟着在重定位帧的后面，用重定位帧来恢复位姿
                 if((!mbVelocity && !pCurrentMap->isImuInitialized()) || mCurrentFrame.mnId<mnLastRelocFrameId+2)
                 {
                     Verbose::PrintMess("TRACK: Track with respect to the reference KF ", Verbose::VERBOSITY_DEBUG);
-                    // 参考帧跟踪
+                    // 参考关键帧跟踪
 					bOK = TrackReferenceKeyFrame();
                 }
+				// 一般情况
                 else
                 {
                     Verbose::PrintMess("TRACK: Track with motion model", Verbose::VERBOSITY_DEBUG);
 					// 运动模型跟踪
                     bOK = TrackWithMotionModel();
+					// 运动模型跟踪失败 采用参考关键帧跟踪
                     if(!bOK)
                         bOK = TrackReferenceKeyFrame();
                 }
@@ -2549,7 +2554,7 @@ void Tracking::MonocularInitialization()
 
         // Find correspondences
 		// 构造ORB匹配器
-	    // 0.9 表示最佳的和次佳特征点评分的比值阈值，这里是比较宽松的，跟踪时一般是0.7
+	    // 0.9 表示特征点描述子最佳距离和次佳的比较系数，这里是比较宽松的，跟踪时一般是0.7
 		// true 表示检查特征点的方向
         ORBmatcher matcher(0.9,true);
 		// 对前两帧进行特征点匹配
@@ -2787,52 +2792,76 @@ void Tracking::CreateMapInAtlas()
 
     mbCreatedMap = true;
 }
-
+/**
+ * @brief 检查上一帧中的地图点是否需要被替换
+ *
+ * Local Mapping线程可能会将关键帧中某些地图点进行替换，由于tracking中需要用到上一帧地图点，检查并更新上一帧中被替换的地图点
+ * @see LocalMapping::SearchInNeighbors()
+ */
 void Tracking::CheckReplacedInLastFrame()
 {
+	// 遍历上一帧地图点(按照特征点数计算)
     for(int i =0; i<mLastFrame.N; i++)
     {
         MapPoint* pMP = mLastFrame.mvpMapPoints[i];
 
         if(pMP)
         {
+	        // 获取其是否被替换 以及替换后的点
+	        // 程序不直接删除这个地图点的原因
             MapPoint* pRep = pMP->GetReplaced();
             if(pRep)
             {
+				// 更新地图点
                 mLastFrame.mvpMapPoints[i] = pRep;
             }
         }
     }
 }
-
+/**
+ * @brief 用参考关键帧的地图点来对当前普通帧进行跟踪
+ * Step 1：将当前普通帧的描述子转化为BoW向量
+ * Step 2：通过词袋BoW加速当前帧与参考帧之间的特征点匹配
+ * Step 3: 将上一帧的位姿态作为当前帧位姿的初始值
+ * Step 4: 通过优化3D-2D的重投影误差来获得位姿
+ * Step 5：剔除优化后的匹配点中的外点
+ * @return 如果匹配数超10，返回true
+ *
+ */
 bool Tracking::TrackReferenceKeyFrame()
 {
     // Compute Bag of Words vector
+	// 计算当前帧的BoW向量
     mCurrentFrame.ComputeBoW();
 
     // We perform first an ORB matching with the reference keyframe
     // If enough matches are found we setup a PnP solver
+	// 构造ORB匹配器 相比初始化时 匹配难度提高
     ORBmatcher matcher(0.7,true);
     vector<MapPoint*> vpMapPointMatches;
-
+	// 基于BoW进行匹配
     int nmatches = matcher.SearchByBoW(mpReferenceKF,mCurrentFrame,vpMapPointMatches);
-
+	// 匹配 < 15 失败
     if(nmatches<15)
     {
         cout << "TRACK_REF_KF: Less than 15 matches!!\n";
         return false;
     }
 
+	// 更新当前帧地图点为与参考帧匹配到的地图点
     mCurrentFrame.mvpMapPoints = vpMapPointMatches;
+	// 将上一帧的位姿作为当前帧位姿初始值
     mCurrentFrame.SetPose(mLastFrame.GetPose());
 
     //mCurrentFrame.PrintPointDistribution();
 
 
     // cout << " TrackReferenceKeyFrame mLastFrame.mTcw:  " << mLastFrame.mTcw << endl;
+	// 用3D-2D的重投影误差对当前帧进行位姿优化
     Optimizer::PoseOptimization(&mCurrentFrame);
 
     // Discard outliers
+	// 删除外点
     int nmatchesMap = 0;
     for(int i =0; i<mCurrentFrame.N; i++)
     {
@@ -2862,7 +2891,9 @@ bool Tracking::TrackReferenceKeyFrame()
 
     if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
         return true;
+	// 无IMU
     else
+		// 跟踪成功数目>=10 为跟踪成功 否则失败
         return nmatchesMap>=10;
 }
 
