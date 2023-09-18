@@ -887,6 +887,7 @@ void Optimizer::FullInertialBA(Map *pMap, int its, const bool bFixLocal, const l
 /**
  * @brief 位姿优化，纯视觉时使用。优化目标：单帧的位姿
  * 该优化函数主要用于Tracking线程中：运动跟踪、参考帧跟踪、地图跟踪、重定位
+ * 优化约束为待优化帧观察到的地图点(世界系下，不被改变)在该帧上的重投影误差
  * @param pFrame 待优化的帧
  * @return
 */
@@ -937,7 +938,8 @@ int Optimizer::PoseOptimization(Frame *pFrame)
     const float deltaStereo = sqrt(7.815);
 	// 添加一元边
     {
-	    // 锁定地图点。由于需要使用地图点来构造顶点和边,因此不希望在构造的过程中部分地图点被改写造成不一致甚至是段错误
+	    // 锁定地图点
+		// 由于需要使用地图点来构造顶点和边，避免在构造的过程中部分地图点被改写造成不一致甚至是段错误
         unique_lock<mutex> lock(MapPoint::mGlobalMutex);
 		// 遍历地图点
 	    for(int i=0; i<N; i++)

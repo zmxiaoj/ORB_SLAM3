@@ -1722,35 +1722,57 @@ namespace ORB_SLAM3
 
         return nFound;
     }
-
+	/**
+	 * @brief 将上一帧跟踪的地图点投影到当前帧，并且搜索匹配点。用于跟踪前一帧
+	 * Step 1 建立旋转直方图，用于检测旋转一致性
+	 * Step 2 计算当前帧和前一帧的平移向量
+	 * Step 3 对于前一帧的每一个地图点，通过相机投影模型，得到投影到当前帧的像素坐标
+	 * Step 4 根据相机的前后前进方向来判断搜索尺度范围
+	 * Step 5 遍历候选匹配点，寻找距离最小的最佳匹配点
+	 * Step 6 计算匹配点旋转角度差所在的直方图
+	 * Step 7 进行旋转一致检测，剔除不一致的匹配
+	 * @param[in] CurrentFrame          当前帧
+	 * @param[in] LastFrame             上一帧
+	 * @param[in] th                    搜索范围阈值，默认单目为7，双目15
+	 * @param[in] bMono                 是否为单目
+	 * @return int                      成功匹配的数量
+	 */
     int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, const float th, const bool bMono)
     {
         int nmatches = 0;
 
         // Rotation Histogram (to check rotation consistency)
+	    // 建立旋转直方图，用于检测旋转一致性
         vector<int> rotHist[HISTO_LENGTH];
         for(int i=0;i<HISTO_LENGTH;i++)
             rotHist[i].reserve(500);
         const float factor = 1.0f/HISTO_LENGTH;
-
+		// 当前帧位姿和平移
         const Sophus::SE3f Tcw = CurrentFrame.GetPose();
         const Eigen::Vector3f twc = Tcw.inverse().translation();
-
+		// 上一帧位姿
         const Sophus::SE3f Tlw = LastFrame.GetPose();
+		// 当前帧到上一帧平移
         const Eigen::Vector3f tlc = Tlw * twc;
-
+		// 判断前进/后退
+		// 非单目情况，如果Z大于基线，则表示相机明显前进
         const bool bForward = tlc(2)>CurrentFrame.mb && !bMono;
+	    // 非单目情况，如果-Z小于基线，则表示相机明显后退
         const bool bBackward = -tlc(2)>CurrentFrame.mb && !bMono;
-
+		// 遍历上一帧每个特征点对应地图点
         for(int i=0; i<LastFrame.N; i++)
         {
             MapPoint* pMP = LastFrame.mvpMapPoints[i];
-            if(pMP)
+            // 存在地图点
+			if(pMP)
             {
+				// 不是外点
                 if(!LastFrame.mvbOutlier[i])
                 {
                     // Project
+					// 上一帧地图点在世界系下坐标
                     Eigen::Vector3f x3Dw = pMP->GetWorldPos();
+	                // 上一帧地图点在当前帧下的坐标
                     Eigen::Vector3f x3Dc = Tcw * x3Dw;
 
                     const float xc = x3Dc(0);
@@ -1759,27 +1781,35 @@ namespace ORB_SLAM3
 
                     if(invzc<0)
                         continue;
-
+					// 投影到当前帧像素坐标系下
                     Eigen::Vector2f uv = CurrentFrame.mpCamera->project(x3Dc);
 
                     if(uv(0)<CurrentFrame.mnMinX || uv(0)>CurrentFrame.mnMaxX)
                         continue;
                     if(uv(1)<CurrentFrame.mnMinY || uv(1)>CurrentFrame.mnMaxY)
                         continue;
-
+					// 投影前后特征点尺度信息不变 取出对应金字塔层级
                     int nLastOctave = (LastFrame.Nleft == -1 || i < LastFrame.Nleft) ? LastFrame.mvKeys[i].octave
                                                                                      : LastFrame.mvKeysRight[i - LastFrame.Nleft].octave;
 
                     // Search in a window. Size depends on scale
+					// 计算搜索半径
                     float radius = th*CurrentFrame.mvScaleFactors[nLastOctave];
-
+	                // 记录候选匹配点的id
                     vector<size_t> vIndices2;
 
-                    if(bForward)
+	                // 根据相机的前进后退方向来判断搜索尺度范围
+	                // 例如一个有一定面积的圆点，在某个尺度n下它是一个特征点
+	                // 当相机前进时，圆点的面积增大，在某个尺度m下它是一个特征点，由于面积增大，则需要在更高的尺度下才能检测出来
+	                // 当相机后退时，圆点的面积减小，在某个尺度m下它是一个特征点，由于面积减小，则需要在更低的尺度下才能检测出来
+	                // 前进,则上一帧兴趣点在所在的尺度nLastOctave<=nCurOctave
+					if(bForward)
                         vIndices2 = CurrentFrame.GetFeaturesInArea(uv(0),uv(1), radius, nLastOctave);
-                    else if(bBackward)
+					// 后退,则上一帧兴趣点在所在的尺度0<=nCurOctave<=nLastOctave
+					else if(bBackward)
                         vIndices2 = CurrentFrame.GetFeaturesInArea(uv(0),uv(1), radius, 0, nLastOctave);
-                    else
+                    // 在图层上下均进行搜索
+					else
                         vIndices2 = CurrentFrame.GetFeaturesInArea(uv(0),uv(1), radius, nLastOctave-1, nLastOctave+1);
 
                     if(vIndices2.empty())
@@ -1789,15 +1819,15 @@ namespace ORB_SLAM3
 
                     int bestDist = 256;
                     int bestIdx2 = -1;
-
+	                // 遍历候选匹配点，寻找距离最小的最佳匹配点
                     for(vector<size_t>::const_iterator vit=vIndices2.begin(), vend=vIndices2.end(); vit!=vend; vit++)
                     {
                         const size_t i2 = *vit;
-
+						// 特征点已经存在匹配地图点
                         if(CurrentFrame.mvpMapPoints[i2])
                             if(CurrentFrame.mvpMapPoints[i2]->Observations()>0)
                                 continue;
-
+						// 双目
                         if(CurrentFrame.Nleft == -1 && CurrentFrame.mvuRight[i2]>0)
                         {
                             const float ur = uv(0) - CurrentFrame.mbf*invzc;
@@ -1805,23 +1835,23 @@ namespace ORB_SLAM3
                             if(er>radius)
                                 continue;
                         }
-
+						// 取出特征点描述子
                         const cv::Mat &d = CurrentFrame.mDescriptors.row(i2);
-
+						// 计算距离
                         const int dist = DescriptorDistance(dMP,d);
-
+						// 更新最优距离
                         if(dist<bestDist)
                         {
                             bestDist=dist;
                             bestIdx2=i2;
                         }
                     }
-
+					// 最优距离小于阈值
                     if(bestDist<=TH_HIGH)
                     {
                         CurrentFrame.mvpMapPoints[bestIdx2]=pMP;
                         nmatches++;
-
+						// 验证旋转方向 将匹配点方向差值分配到直方图中
                         if(mbCheckOrientation)
                         {
                             cv::KeyPoint kpLF = (LastFrame.Nleft == -1) ? LastFrame.mvKeysUn[i]
@@ -1841,6 +1871,7 @@ namespace ORB_SLAM3
                             rotHist[bin].push_back(bestIdx2);
                         }
                     }
+					// 双目情况
                     if(CurrentFrame.Nleft != -1){
                         Eigen::Vector3f x3Dr = CurrentFrame.GetRelativePoseTrl() * x3Dc;
                         Eigen::Vector2f uv = CurrentFrame.mpCamera->project(x3Dr);
@@ -1912,6 +1943,7 @@ namespace ORB_SLAM3
         }
 
         //Apply rotation consistency
+		// 检验旋转方向一致性
         if(mbCheckOrientation)
         {
             int ind1=-1;

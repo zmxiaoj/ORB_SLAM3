@@ -41,7 +41,7 @@ public:
     void computeError()  {
         const g2o::VertexSE3Expmap* v1 = static_cast<const g2o::VertexSE3Expmap*>(_vertices[0]);
         Eigen::Vector2d obs(_measurement);
-		// 测量 - 估计(地图点变换到相机坐标系下再到归一化图像坐标系下)
+		// 测量 - 估计(世界系地图点变换到归一化相机坐标系再到像素坐标系)
         _error = obs-pCamera->project(v1->estimate().map(Xw));
     }
 
