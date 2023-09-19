@@ -3827,7 +3827,9 @@ bool Tracking::Relocalization()
 			//
             else
             {
-				// 初始化MLPnPsolver
+				// ORBSLAM2使用EPnP 依赖预先标定好的针孔相机模型
+				// ORBSLAM3使用MLPnP 不依赖相机模型解耦了关系
+	            // 初始化MLPnPsolver
                 MLPnPsolver* pSolver = new MLPnPsolver(mCurrentFrame,vvpMapPointMatches[i]);
 				// 设定参数
                 pSolver->SetRansacParameters(0.99,  // 模型最大概率值，默认0.9
@@ -3849,9 +3851,10 @@ bool Tracking::Relocalization()
 	// 足够多内点匹配才能使用PnP算法，MLPnP至少6个点
     bool bMatch = false;
     ORBmatcher matcher2(0.9,true);
-
+	// 直到 无候选关键帧 或 找到相匹配关键帧
     while(nCandidates>0 && !bMatch)
     {
+	    // 遍历全部候选关键帧
         for(int i=0; i<nKFs; i++)
         {
             if(vbDiscarded[i])
@@ -3864,9 +3867,11 @@ bool Tracking::Relocalization()
 
             MLPnPsolver* pSolver = vpMLPnPsolvers[i];
             Eigen::Matrix4f eigTcw;
+	        // 进行5次RANSAC迭代
             bool bTcw = pSolver->iterate(5,bNoMore,vbInliers,nInliers, eigTcw);
 
             // If Ransac reachs max. iterations discard keyframe
+			// 迭代完成 标记标记放弃
             if(bNoMore)
             {
                 vbDiscarded[i]=true;
@@ -3874,6 +3879,7 @@ bool Tracking::Relocalization()
             }
 
             // If a Camera Pose is computed, optimize
+			// 求解出相机位姿 进行优化
             if(bTcw)
             {
                 Sophus::SE3f Tcw(eigTcw);

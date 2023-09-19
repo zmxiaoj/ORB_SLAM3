@@ -52,59 +52,98 @@
 
 
 namespace ORB_SLAM3 {
+	/**
+	 * @brief MLPnP 构造函数
+	 *
+	 * @param[in] F                         输入帧的数据
+	 * @param[in] vpMapPointMatches         待匹配的特征点
+	 * @param[in] mnInliersi                内点的个数
+	 * @param[in] mnIterations              Ransac迭代次数
+	 * @param[in] mnBestInliers             最佳内点数
+	 * @param[in] N                         所有2D点的个数
+	 * @param[in] mpCamera                  相机模型，利用该变量对3D点进行投影
+	 */
     MLPnPsolver::MLPnPsolver(const Frame &F, const vector<MapPoint *> &vpMapPointMatches):
             mnInliersi(0), mnIterations(0), mnBestInliers(0), N(0), mpCamera(F.mpCamera){
-        mvpMapPointMatches = vpMapPointMatches;
+		// 待匹配的特征点，是当前帧和候选关键帧用BoW进行快速匹配的结果
+		mvpMapPointMatches = vpMapPointMatches;
+		// 初始化3D点的单位向量
         mvBearingVecs.reserve(F.mvpMapPoints.size());
+		// 初始化3D点的投影点
         mvP2D.reserve(F.mvpMapPoints.size());
+		// 初始化卡方检验中的sigma值
         mvSigma2.reserve(F.mvpMapPoints.size());
+		// 初始化3D点坐标
         mvP3Dw.reserve(F.mvpMapPoints.size());
+		// 初始化3D点的索引值
         mvKeyPointIndices.reserve(F.mvpMapPoints.size());
+		// 初始化所有索引值
         mvAllIndices.reserve(F.mvpMapPoints.size());
 
         int idx = 0;
+		// 遍历匹配到的地图点
         for(size_t i = 0, iend = mvpMapPointMatches.size(); i < iend; i++){
             MapPoint* pMP = vpMapPointMatches[i];
 
             if(pMP){
+				// 地图点存在且合法
                 if(!pMP -> isBad()){
                     if(i >= F.mvKeysUn.size()) continue;
+					// 取出地图点对应当前帧中的特征点
                     const cv::KeyPoint &kp = F.mvKeysUn[i];
-
+	                // 保存地图点的特征点(投影)
                     mvP2D.push_back(kp.pt);
                     mvSigma2.push_back(F.mvLevelSigma2[kp.octave]);
 
                     //Bearing vector should be normalized
+					// 将特征点转换到归一化相机坐标系
                     cv::Point3f cv_br = mpCamera->unproject(kp.pt);
+					// 归一化(重复操作)
                     cv_br /= cv_br.z;
                     bearingVector_t br(cv_br.x,cv_br.y,cv_br.z);
                     mvBearingVecs.push_back(br);
 
                     //3D coordinates
+					// 保存地图点世界坐标
                     Eigen::Matrix<float,3,1> posEig = pMP -> GetWorldPos();
                     point_t pos(posEig(0),posEig(1),posEig(2));
                     mvP3Dw.push_back(pos);
-
+					// 记录当前特征点的索引值，挑选后的
                     mvKeyPointIndices.push_back(i);
+	                // 记录所有特征点的索引值
                     mvAllIndices.push_back(idx);
 
                     idx++;
                 }
             }
         }
-
+		// 设置参数
         SetRansacParameters();
     }
 
     //RANSAC methods
+	/**
+	 * @brief MLPnP迭代计算相机位姿
+	 * @param[in] nIterations   迭代次数
+	 * @param[in] bNoMore       达到最大迭代次数的标志
+	 * @param[in] vbInliers     内点的标记
+	 * @param[in] nInliers      总共内点数
+	 * @param[out] Tout         解算位姿
+	 * @return bool             是否计算出来的位姿
+	 */
     bool MLPnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers, Eigen::Matrix4f &Tout){
-        Tout.setIdentity();
+		// 初始化位姿
+		Tout.setIdentity();
+		// 已经达到最大迭代次数的标志
         bNoMore = false;
+		// 是否为内点
 	    vbInliers.clear();
 	    nInliers=0;
-
+		// N为所有2D点的个数, mRansacMinInliers为正常退出RANSAC迭代过程中最少的inlier数
+		// 如果2D点个数不足以启动RANSAC迭代过程的最小下限，则退出
 	    if(N<mRansacMinInliers)
 	    {
+		    // 已经达到最大迭代次数的标志
 	        bNoMore = true;
 	        return false;
 	    }
@@ -112,43 +151,50 @@ namespace ORB_SLAM3 {
 	    vector<size_t> vAvailableIndices;
 
 	    int nCurrentIterations = 0;
+		// 历史进行的迭代次数少于最大迭代值 或 当前进行的迭代次数少于当前函数给定的最大迭代值
 	    while(mnIterations<mRansacMaxIts || nCurrentIterations<nIterations)
 	    {
 	        nCurrentIterations++;
 	        mnIterations++;
-
+		    // 清空已有的匹配点的计数,为新的一次迭代作准备
 	        vAvailableIndices = mvAllIndices;
 
             //Bearing vectors and 3D points used for this ransac iteration
+		    // 初始化特征点的归一化坐标和3D点，给当前RANSAC使用
             bearingVectors_t bearingVecs(mRansacMinSet);
             points_t p3DS(mRansacMinSet);
             vector<int> indexes(mRansacMinSet);
 
 	        // Get min set of points
+			// 选取最小集个(6)点
 	        for(short i = 0; i < mRansacMinSet; ++i)
 	        {
 	            int randi = DUtils::Random::RandomInt(0, vAvailableIndices.size()-1);
-
+				// 获取随机备选点索引
 	            int idx = vAvailableIndices[randi];
 
                 bearingVecs[i] = mvBearingVecs[idx];
                 p3DS[i] = mvP3Dw[idx];
                 indexes[i] = i;
-
+		        // 把抽取出来的点从所有备选点数组里删除掉，概率论中不放回的操作
 	            vAvailableIndices[randi] = vAvailableIndices.back();
 	            vAvailableIndices.pop_back();
 	        }
 
             //By the moment, we are using MLPnP without covariance info
+			// 协方差矩阵
             cov3_mats_t covs(1);
 
             //Result
             transformation_t result;
 
 	        // Compute camera pose
+			// 计算相机位姿
             computePose(bearingVecs,p3DS,covs,indexes,result);
 
-            //Save result
+            // Save result
+			// 对应12个(9R + 3t)结果
+			// R
             mRi[0][0] = result(0,0);
             mRi[0][1] = result(0,1);
             mRi[0][2] = result(0,2);
@@ -160,15 +206,17 @@ namespace ORB_SLAM3 {
             mRi[2][0] = result(2,0);
             mRi[2][1] = result(2,1);
             mRi[2][2] = result(2,2);
-
+			// t
             mti[0] = result(0,3);mti[1] = result(1,3);mti[2] = result(2,3);
 
 	        // Check inliers
+			// 卡方检验内点
 	        CheckInliers();
 
 	        if(mnInliersi>=mRansacMinInliers)
 	        {
 	            // If it is the best solution so far, save it
+				// 如果是最优解 保存
 	            if(mnInliersi>mnBestInliers)
 	            {
 	                mvbBestInliers = mvbInliersi;
@@ -185,7 +233,7 @@ namespace ORB_SLAM3 {
                     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> eigRcw(mRi[0]);
                     Eigen::Vector3d eigtcw(mti);
 	            }
-
+		        // 用新的内点对相机位姿精求解，提高位姿估计精度，这里如果有足够内点的话，函数直接返回该值，不再继续计算
 	            if(Refine())
 	            {
 	                nInliers = mnRefinedInliers;
@@ -234,22 +282,25 @@ namespace ORB_SLAM3 {
 	    mvbInliersi.resize(N);
 
 	    // Adjust Parameters according to number of correspondences
+		// 根据参数选择最小内点数
 	    int nMinInliers = N*mRansacEpsilon;
 	    if(nMinInliers<mRansacMinInliers)
 	        nMinInliers=mRansacMinInliers;
 	    if(nMinInliers<minSet)
 	        nMinInliers=minSet;
 	    mRansacMinInliers = nMinInliers;
-
+		// 根据最终得到的"最小内点数"来调整 内点数/总体数 比例
 	    if(mRansacEpsilon<(float)mRansacMinInliers/N)
 	        mRansacEpsilon=(float)mRansacMinInliers/N;
 
 	    // Set RANSAC iterations according to probability, epsilon, and max iterations
+		// 计算ransac迭代次数
 	    int nIterations;
 
 	    if(mRansacMinInliers==N)
 	        nIterations=1;
 	    else
+			// RANSAC的迭代次数 log(1-置信度)/log(1-异常比例^样本数量)
 	        nIterations = ceil(log(1-mRansacProb)/log(1-pow(mRansacEpsilon,3)));
 
 	    mRansacMaxIts = max(1,min(nIterations,mRansacMaxIts));
@@ -353,21 +404,53 @@ namespace ORB_SLAM3 {
     }
 
 	//MLPnP methods
+	/**
+	 * @brief MLPnP相机位姿估计
+	 * @param[in] f             单位向量
+	 * @param[in] p             点的3D坐标
+	 * @param[in] covMats       协方差矩阵
+	 * @param[in] indices       对应点的索引值
+	 * @param[in] result        相机位姿估计结果
+	 */
     void MLPnPsolver::computePose(const bearingVectors_t &f, const points_t &p, const cov3_mats_t &covMats,
                                   const std::vector<int> &indices, transformation_t &result) {
+		// 判断匹配点是否满足条件(>6)
         size_t numberCorrespondences = indices.size();
         assert(numberCorrespondences > 5);
-
+		// 标记是否满足平面条件
         bool planar = false;
         // compute the nullspace of all vectors
+		// 计算点的单位(方向)向量的零空间
         std::vector<Eigen::MatrixXd> nullspaces(numberCorrespondences);
+		// 存储世界坐标系下空间点的矩阵，3行N列，N是numberCorrespondences，即点的总个数
+		//           |x1, x2,      xn|
+		// points3 = |y1, y2, ..., yn|
+		//           |z1, z2,      zn|
         Eigen::MatrixXd points3(3, numberCorrespondences);
+		// 空间点向量
+		//            |xi|
+		// points3v = |yi|
+		//            |zi|
         points_t points3v(numberCorrespondences);
+		// 单个空间点的齐次坐标矩阵 没用到
+		//            |xi|
+		// points4v = |yi|
+		//            |zi|
+		//            |1 |
         points4_t points4v(numberCorrespondences);
+		// numberCorrespondences不等于所有点，而是提取出来的内点的数量，其作为连续索引值对indices进行索引
+		// 因为内点的索引并非连续，想要方便遍历，必须用连续的索引值
+		// 所以就用了indices[i]嵌套形式，i表示内点数量numberCorrespondences范围内的连续形式
+		// indices里面保存的是不连续的内点的索引值
         for (size_t i = 0; i < numberCorrespondences; i++) {
+	        // 当前空间点的单位向量 indices[i]是当前点坐标和向量的索引值
             bearingVector_t f_current = f[indices[i]];
+	        // 取出当前点记录到 points3 空间点矩阵里
             points3.col(i) = p[indices[i]];
             // nullspace of right vector
+			// 求解方程 Jvr(v) = null(v^T) = [r s]
+	        // A = U * S * V^T
+	        // 这里只求解了V的完全解，没有求解U
             Eigen::JacobiSVD<Eigen::MatrixXd, Eigen::HouseholderQRPreconditioner>
                     svd_f(f_current.transpose(), Eigen::ComputeFullV);
             nullspaces[i] = svd_f.matrixV().block(0, 1, 3, 2);
