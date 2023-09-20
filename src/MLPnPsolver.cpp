@@ -453,14 +453,21 @@ namespace ORB_SLAM3 {
 	        // 这里只求解了V的完全解，没有求解U
             Eigen::JacobiSVD<Eigen::MatrixXd, Eigen::HouseholderQRPreconditioner>
                     svd_f(f_current.transpose(), Eigen::ComputeFullV);
+	        // 取特征值最小的那两个(0,0)对应的2个特征向量
+	        //              |r1 s1|
+	        // nullspaces = |r2 s2|
+	        //              |r3 s3|
             nullspaces[i] = svd_f.matrixV().block(0, 1, 3, 2);
-            points3v[i] = p[indices[i]];
+	        // 取出当前点记录到 points3v 空间点向量
+			points3v[i] = p[indices[i]];
         }
 
         //////////////////////////////////////
         // 1. test if we have a planar scene
         //////////////////////////////////////
-
+		// 通过计算S的秩来判断是在平面情况还是在正常情况
+		// 在平面条件下，会产生4个解，因此需要另外判断和解决平面条件下的问题
+		// S = M * M^T，其中M = [p1,p2,...,pi] 即 points3 空间点矩阵
         Eigen::Matrix3d planarTest = points3 * points3.transpose();
         Eigen::FullPivHouseholderQR<Eigen::Matrix3d> rankTest(planarTest);
         Eigen::Matrix3d eigenRot;
@@ -469,20 +476,26 @@ namespace ORB_SLAM3 {
         // if yes -> transform points to new eigen frame
         //if (minEigenVal < 1e-3 || minEigenVal == 0.0)
         //rankTest.setThreshold(1e-10);
+		// S矩阵秩为2 属于特征点共面
         if (rankTest.rank() == 2) {
             planar = true;
             // self adjoint is faster and more accurate than general eigen solvers
             // also has closed form solution for 3x3 self-adjoint matrices
             // in addition this solver sorts the eigenvalues in increasing order
+			// 自伴随(厄米特)矩阵 A=A^H
             Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigen_solver(planarTest);
-            eigenRot = eigen_solver.eigenvectors().real();
+            // S的特征向量 R_s
+			eigenRot = eigen_solver.eigenvectors().real();
+			// 转置 R_s^T
             eigenRot.transposeInPlace();
+			// p_i' = R_S^T * p_i
             for (size_t i = 0; i < numberCorrespondences; i++)
                 points3.col(i) = eigenRot * points3.col(i);
         }
         //////////////////////////////////////
         // 2. stochastic model
         //////////////////////////////////////
+        // 随机模型中的协方差矩阵 但是未使用
         Eigen::SparseMatrix<double> P(2 * numberCorrespondences,
                                       2 * numberCorrespondences);
         bool use_cov = false;
@@ -490,6 +503,7 @@ namespace ORB_SLAM3 {
 
         // if we do have covariance information
         // -> fill covariance matrix
+		// covMats.size() = 1; numberCorrespondences = 6 未使用
         if (covMats.size() == numberCorrespondences) {
             use_cov = true;
             int l = 0;
@@ -508,18 +522,28 @@ namespace ORB_SLAM3 {
         //////////////////////////////////////
         // 3. fill the design matrix A
         //////////////////////////////////////
+        // 构造A矩阵 Au=0
+		// u = [r11, r12, r13, r21, r22, r23, r31, r32, r33, t1, t2, t3]^T
+		// 对单位向量v的2个零空间向量做微分，所以有[dr, ds]^T，一个点有2行，N个点就有2*N行
         const int rowsA = 2 * numberCorrespondences;
         int colsA = 12;
         Eigen::MatrixXd A;
-        if (planar) {
+		// 如果世界点位于分别跨2个坐标轴的平面上，即所有世界点的一个元素是常数的时候，可简单地忽略矩阵A中对应的列
+		// 而且这不影响问题的结构本身，所以在计算公式20： pi' = R_S^T * pi的时候，忽略了r11,r21,r31，即第一列
+		// 对应的u只有9个元素 u = [r12, r13, r22, r23, r32, r33, t1, t2, t3]^T 所以A的列个数是9个
+		if (planar)
+		{
             colsA = 9;
             A = Eigen::MatrixXd(rowsA, 9);
-        } else
+        }
+		else
             A = Eigen::MatrixXd(rowsA, 12);
         A.setZero();
 
         // fill design matrix
-        if (planar) {
+		// 填充A
+        if (planar)
+		{
             for (size_t i = 0; i < numberCorrespondences; ++i) {
                 point_t pt3_current = points3.col(i);
 
@@ -551,7 +575,9 @@ namespace ORB_SLAM3 {
                 A(2 * i, 8) = nullspaces[i](2, 0);
                 A(2 * i + 1, 8) = nullspaces[i](2, 1);
             }
-        } else {
+        }
+		else
+		{
             for (size_t i = 0; i < numberCorrespondences; ++i) {
                 point_t pt3_current = points3.col(i);
 
@@ -598,18 +624,21 @@ namespace ORB_SLAM3 {
         // 4. solve least squares
         //////////////////////////////////////
         Eigen::MatrixXd AtPA;
+		// 添加协方差矩阵
         if (use_cov)
             AtPA = A.transpose() * P * A; // setting up the full normal equations seems to be unstable
         else
             AtPA = A.transpose() * A;
-
+		// SVD分解，满秩求解V
         Eigen::JacobiSVD<Eigen::MatrixXd> svd_A(AtPA, Eigen::ComputeFullV);
+		// 解就是对应奇异值最小的列向量，即最后一列
         Eigen::MatrixXd result1 = svd_A.matrixV().col(colsA - 1);
 
         ////////////////////////////////
         // now we treat the results differently,
         // depending on the scene (planar or not)
         ////////////////////////////////
+        // 根据平面和非平面情况选择R t
         rotation_t Rout;
         translation_t tout;
         if (planar) // planar case
@@ -621,25 +650,53 @@ namespace ORB_SLAM3 {
                     0.0, result1(2, 0), result1(3, 0),
                     0.0, result1(4, 0), result1(5, 0);
             // row 3
+			// 第0列 = 第1列 X 第2列
             tmp.col(0) = tmp.col(1).cross(tmp.col(2));
-            tmp.transposeInPlace();
+	        // 原来是:
+	        //       |r11 r12 r13|
+	        // tmp = |r21 r22 r23|
+	        //       |r31 r32 r33|
+	        // 转置变成:
+	        //       |r11 r21 r31|
+	        // tmp = |r12 r22 r32|
+	        //       |r13 r23 r33|
+			tmp.transposeInPlace();
 
+	        // 平移部分 t 只表示了正确的方向，没有尺度，需要求解 scale, 先求系数
             double scale = 1.0 / std::sqrt(std::abs(tmp.col(1).norm() * tmp.col(2).norm()));
             // find best rotation matrix in frobenius sense
-            Eigen::JacobiSVD<Eigen::MatrixXd> svd_R_frob(tmp, Eigen::ComputeFullU | Eigen::ComputeFullV);
-            rotation_t Rout1 = svd_R_frob.matrixU() * svd_R_frob.matrixV().transpose();
+	        // 本质上，采用矩阵，将其元素平方，将它们加在一起并对结果平方根。计算得出的数字是矩阵的Frobenious范数
+	        // 由于列向量是单列矩阵，行向量是单行矩阵，所以这些矩阵的Frobenius范数等于向量的长度（L）
+	        Eigen::JacobiSVD<Eigen::MatrixXd> svd_R_frob(tmp, Eigen::ComputeFullU | Eigen::ComputeFullV);
+	        // 利用Frobenious范数计算最佳的旋转矩阵，利用公式(19)， R = U_R*V_R^T
+			rotation_t Rout1 = svd_R_frob.matrixU() * svd_R_frob.matrixV().transpose();
             // test if we found a good rotation matrix
+	        // 如果估计出来的旋转矩阵的行列式小于0，则乘以-1（EPnP也是同样的操作）
             if (Rout1.determinant() < 0)
                 Rout1 *= -1.0;
             // rotate this matrix back using the eigen frame
+	        // 因为是在平面情况下计算的，估计出来的旋转矩阵是要做一个转换的，根据公式(21)，R = Rs*R
+	        // 其中，Rs表示特征向量的旋转矩阵
             Rout1 = eigenRot.transpose() * Rout1;
-
+	        // 估计最终的平移矩阵，带尺度信息的，根据公式(17)，t = t^ / three-party(||r1||*||r2||*||r3||)
+	        // 这里是 t = t^ / sqrt(||r1||*||r2||)
             translation_t t = scale * translation_t(result1(6, 0), result1(7, 0), result1(8, 0));
-            Rout1.transposeInPlace();
+	        // 把之前转置过来的矩阵再转回去，变成公式里面的形态:
+	        //         |r11 r12 r13|
+	        // Rout1 = |r21 r22 r23|
+	        //         |r31 r32 r33|
+			Rout1.transposeInPlace();
+	        // 这里乘以-1是为了计算4种结果
             Rout1 *= -1;
             if (Rout1.determinant() < 0.0)
                 Rout1.col(2) *= -1;
             // now we have to find the best out of 4 combinations
+	        //         |r11 r12 r13|
+	        //    R1 = |r21 r22 r23|
+	        //         |r31 r32 r33|
+	        //         |-r11 -r12 -r13|
+	        //    R2 = |-r21 -r22 -r23|
+	        //         |-r31 -r32 -r33|
             rotation_t R1, R2;
             R1.col(0) = Rout1.col(0);
             R1.col(1) = Rout1.col(1);
@@ -647,7 +704,10 @@ namespace ORB_SLAM3 {
             R2.col(0) = -Rout1.col(0);
             R2.col(1) = -Rout1.col(1);
             R2.col(2) = Rout1.col(2);
-
+	        //      |R1  t|
+	        // Ts = |R1 -t|
+	        //      |R2  t|
+	        //      |R2 -t|
             vector<transformation_t, Eigen::aligned_allocator<transformation_t>> Ts(4);
             Ts[0].block<3, 3>(0, 0) = R1;
             Ts[0].block<3, 1>(0, 3) = t;
@@ -659,24 +719,43 @@ namespace ORB_SLAM3 {
             Ts[3].block<3, 1>(0, 3) = -t;
 
             vector<double> normVal(4);
-            for (int i = 0; i < 4; ++i) {
+	        // 遍历4种解
+            for (int i = 0; i < 4; ++i)
+			{
                 point_t reproPt;
                 double norms = 0.0;
-                for (int p = 0; p < 6; ++p) {
+				// 计算世界点p到切线空间v的投影的残差，对应最小的就是最好的解
+				// 用前6个点来验证4种解的残差
+                for (int p = 0; p < 6; ++p)
+				{
+					// 重投影的向量
                     reproPt = Ts[i].block<3, 3>(0, 0) * points3v[p] + Ts[i].block<3, 1>(0, 3);
-                    reproPt = reproPt / reproPt.norm();
+                    // 归一化为单位向量
+					reproPt = reproPt / reproPt.norm();
+					// f[indices[p]] 是当前空间点的单位向量
+					// 利用欧氏距离来表示重投影向量(观测)和当前空间点向量(实际)的偏差
+					// 即两个n维向量a(x11,x12,…,x1n)与 b(x21,x22,…,x2n)间的欧氏距离
                     norms += (1.0 - reproPt.transpose() * f[indices[p]]);
                 }
                 normVal[i] = norms;
             }
+			// 找到最小得分(欧氏距离)对应的解的指针
             std::vector<double>::iterator
                     findMinRepro = std::min_element(std::begin(normVal), std::end(normVal));
-            int idx = std::distance(std::begin(normVal), findMinRepro);
+            // 相对头结点的距离 作为索引
+			int idx = std::distance(std::begin(normVal), findMinRepro);
+			// 得到最终结果
             Rout = Ts[idx].block<3, 3>(0, 0);
             tout = Ts[idx].block<3, 1>(0, 3);
-        } else // non-planar
+        }
+		else // non-planar
         {
             rotation_t tmp;
+	        // 从AtPA的SVD分解中得到旋转矩阵，先存下来
+	        // 注意这里的顺序是和公式16不同的
+	        //       |r11 r21 r31|
+	        // tmp = |r12 r22 r32|
+	        //       |r13 r23 r33|
             tmp << result1(0, 0), result1(3, 0), result1(6, 0),
                     result1(1, 0), result1(4, 0), result1(7, 0),
                     result1(2, 0), result1(5, 0), result1(8, 0);
@@ -686,31 +765,57 @@ namespace ORB_SLAM3 {
             //double scale = 1.0 / std::sqrt(std::abs(tmp.col(0).norm() * tmp.col(1).norm()));
             // find best rotation matrix in frobenius sense
             Eigen::JacobiSVD<Eigen::MatrixXd> svd_R_frob(tmp, Eigen::ComputeFullU | Eigen::ComputeFullV);
-            Rout = svd_R_frob.matrixU() * svd_R_frob.matrixV().transpose();
+			// R = U_R*V_R^T
+			Rout = svd_R_frob.matrixU() * svd_R_frob.matrixV().transpose();
             // test if we found a good rotation matrix
             if (Rout.determinant() < 0)
                 Rout *= -1.0;
             // scale translation
+	        // 从相机坐标系到世界坐标系的转换关系是 lambda*v = R*pi+t
+	        // 从世界坐标系到相机坐标系的转换关系是 pi = R^T*v-R^Tt
+	        // 所以，在下面的计算中，需要计算从世界坐标系到相机坐标系的转换，这里tout = -R^T*t，下面再计算前半部分R^T*v
+	        // 先恢复平移部分的尺度再计算
             tout = Rout * (scale * translation_t(result1(9, 0), result1(10, 0), result1(11, 0)));
 
             // find correct direction in terms of reprojection error, just take the first 6 correspondences
-            vector<double> error(2);
+	        // 非平面情况下，一共有2种解，R,t和R,-t
+	        // 利用前6个点计算重投影误差，选择残差最小的一个解
+			vector<double> error(2);
             vector<Eigen::Matrix4d, Eigen::aligned_allocator<Eigen::Matrix4d>> Ts(2);
             for (int s = 0; s < 2; ++s) {
                 error[s] = 0.0;
                 Ts[s] = Eigen::Matrix4d::Identity();
                 Ts[s].block<3, 3>(0, 0) = Rout;
                 if (s == 0)
+	                //         |.   .  .  .  |
+	                // Ts[s] = |. Rout . tout|
+	                //         |.   .  .  .  |
+	                //         |0   0  0  1  |
                     Ts[s].block<3, 1>(0, 3) = tout;
                 else
+	                //         |.   .  .   .  |
+	                // Ts[s] = |. Rout . -tout|
+	                //         |.   .  .   .  |
+	                //         |0   0  0   1  |
                     Ts[s].block<3, 1>(0, 3) = -tout;
+	            // 为了避免Eigen中aliasing的问题，后面在计算矩阵的逆的时候，需要添加eval()条件
+	            // a = a.transpose(); //error: aliasing
+	            // a = a.transpose().eval(); //ok
+	            // a.transposeInPlace(); //ok
+	            // Eigen中aliasing指的是在赋值表达式的左右两边存在矩阵的重叠区域，这种情况下，有可能得到非预期的结果
+	            // 如mat = 2*mat或者mat = mat.transpose()，第一个例子中的alias是没有问题的，而第二的例子则会导致非预期的计算结果
                 Ts[s] = Ts[s].inverse().eval();
-                for (int p = 0; p < 6; ++p) {
+                for (int p = 0; p < 6; ++p)
+				{
+					// 从世界坐标系到相机坐标系的转换关系是 pi = R^T*v-R^Tt
+					// Ts[s].block<3, 3>(0, 0) * points3v[p] =  Rout   = R^T*v
+					// Ts[s].block<3, 1>(0, 3)               =  tout   = -R^Tt
                     bearingVector_t v = Ts[s].block<3, 3>(0, 0) * points3v[p] + Ts[s].block<3, 1>(0, 3);
                     v = v / v.norm();
                     error[s] += (1.0 - v.transpose() * f[indices[p]]);
                 }
             }
+	        // 选择残差最小的解作为最终解
             if (error[0] < error[1])
                 tout = Ts[0].block<3, 1>(0, 3);
             else
@@ -722,6 +827,8 @@ namespace ORB_SLAM3 {
         //////////////////////////////////////
         // 5. gauss newton
         //////////////////////////////////////
+        // 利用高斯牛顿法对位姿进行精确求解，提高位姿解的精度
+		// 求解非线性方程之前，需要得到罗德里格斯参数，来表达李群(SO3) -> 李代数(so3)的对数映射
         rodrigues_t omega = rot2rodrigues(Rout);
         Eigen::VectorXd minx(6);
         minx[0] = omega[0];
@@ -730,16 +837,23 @@ namespace ORB_SLAM3 {
         minx[3] = tout[0];
         minx[4] = tout[1];
         minx[5] = tout[2];
-
+		// 利用高斯牛顿迭代法优化相机位姿 pose
         mlpnp_gn(minx, points3v, nullspaces, P, use_cov);
 
         Rout = rodrigues2rot(rodrigues_t(minx[0], minx[1], minx[2]));
         tout = translation_t(minx[3], minx[4], minx[5]);
         // result inverse as opengv uses this convention
+		// 这里是用来计算世界坐标系到相机坐标系的转换，所以是Pc=R^T*Pw-R^T*t，反变换
+		// Rout.transpose();
         result.block<3, 3>(0, 0) = Rout;
+		// -result.block<3, 3>(0, 0) * tout;
         result.block<3, 1>(0, 3) = tout;
     }
-
+	/**
+	 * @brief 旋转向量转换成旋转矩阵，即李群->李代数
+	 * @param[in]  omega        旋转向量
+	 * @param[out] R            旋转矩阵
+	 */
     Eigen::Matrix3d MLPnPsolver::rodrigues2rot(const Eigen::Vector3d &omega) {
         rotation_t R = Eigen::Matrix3d::Identity();
 
@@ -756,11 +870,22 @@ namespace ORB_SLAM3 {
 
         return R;
     }
-
+	/**
+	 * @brief 旋转矩阵转换成旋转向量，即李代数->李群
+	 * @param[in]  R       旋转矩阵
+	 * @param[out] omega   旋转向量
+	 问题: 李群(SO3) -> 李代数(so3)的对数映射
+	    利用罗德里格斯公式，已知旋转矩阵的情况下，求解其对数映射ln(R)
+	    就像《视觉十四讲》里面说到的，使用李代数的一大动机是为了进行优化,而在优化过程中导数是非常必要的信息
+	    李群SO(3)中完成两个矩阵乘法，不能用李代数so(3)中的加法表示，问题描述为两个李代数对数映射乘积
+	    而两个李代数对数映射乘积的完整形式，可以用BCH公式表达，其中式子(左乘BCH近似雅可比J)可近似表达，该式也就是罗德里格斯公式
+	    计算完罗德里格斯参数之后，就可以用非线性优化方法了，里面就要用到导数，其形式就是李代数指数映射
+	    所以要在调用非线性MLPnP算法之前计算罗德里格斯参数
+	    */
     Eigen::Vector3d MLPnPsolver::rot2rodrigues(const Eigen::Matrix3d &R) {
         rodrigues_t omega;
         omega << 0.0, 0.0, 0.0;
-
+		// ln(R)^\wedge
         double trace = R.trace() - 1.0;
         double wnorm = acos(trace / 2.0);
         if (wnorm > std::numeric_limits<double>::epsilon())

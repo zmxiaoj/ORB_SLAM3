@@ -1967,7 +1967,15 @@ namespace ORB_SLAM3
 
         return nmatches;
     }
-
+	/**
+     * @brief 通过投影的方式将关键帧中未匹配的地图点投影到当前帧中,进行匹配，并通过旋转直方图进行筛选
+     * @param[in] CurrentFrame          当前帧
+     * @param[in] pKF                   参考关键帧
+     * @param[in] sAlreadyFound         已经找到的地图点集合，不会用于PNP
+     * @param[in] th                    匹配时搜索范围，会乘以金字塔尺度
+     * @param[in] ORBdist               匹配的ORB描述子距离应该小于这个阈值
+     * @return int                      成功匹配的数量
+     */
     int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set<MapPoint*> &sAlreadyFound, const float th , const int ORBdist)
     {
         int nmatches = 0;

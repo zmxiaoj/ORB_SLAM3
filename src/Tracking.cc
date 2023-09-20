@@ -3882,14 +3882,15 @@ bool Tracking::Relocalization()
 			// 求解出相机位姿 进行优化
             if(bTcw)
             {
+	            // 如果MLPnP 计算出了位姿，对内点进行BA优化
                 Sophus::SE3f Tcw(eigTcw);
                 mCurrentFrame.SetPose(Tcw);
                 // Tcw.copyTo(mCurrentFrame.mTcw);
-
+	            // MLPnP 里RANSAC后的内点的集合
                 set<MapPoint*> sFound;
 
                 const int np = vbInliers.size();
-
+	            // 遍历所有内点
                 for(int j=0; j<np; j++)
                 {
                     if(vbInliers[j])
@@ -3900,40 +3901,45 @@ bool Tracking::Relocalization()
                     else
                         mCurrentFrame.mvpMapPoints[j]=NULL;
                 }
-
+	            // 只优化位姿,不优化地图点的坐标，返回的是内点的数量
                 int nGood = Optimizer::PoseOptimization(&mCurrentFrame);
-
+	            // 如果优化之后的内点数目不足，跳过了当前候选关键帧 但不放弃当前帧的重定位
                 if(nGood<10)
                     continue;
-
+	            // 删除外点对应的地图点 直接设为空指针
                 for(int io =0; io<mCurrentFrame.N; io++)
                     if(mCurrentFrame.mvbOutlier[io])
                         mCurrentFrame.mvpMapPoints[io]=static_cast<MapPoint*>(NULL);
 
                 // If few inliers, search by projection in a coarse window and optimize again
+	            // 如果内点较少，则通过投影的方式对之前(词袋匹配)未匹配的点进行匹配，再进行优化求解
                 if(nGood<50)
                 {
-                    int nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,10,100);
-
+					// 使用重投影匹配对当前帧和候选关键帧进行匹配
+                    int nadditional = matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,10,100);
+	                // 如果通过投影过程新增了比较多的匹配特征点对
                     if(nadditional+nGood>=50)
                     {
+	                    // 根据投影匹配的结果，BA优化当前帧位姿
                         nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
                         // If many inliers but still not enough, search by projection again in a narrower window
                         // the camera has been already optimized with many points
+	                    // 如果BA后内点数还是比较少(<50)但是还不至于太少(>30) 最后垂死挣扎
+	                    // 使用更小的搜索窗口重新执行上一步的过程，这里的位姿已经使用了更多的点进行了优化，应该更准所以使用更小的窗口搜索
                         if(nGood>30 && nGood<50)
                         {
                             sFound.clear();
                             for(int ip =0; ip<mCurrentFrame.N; ip++)
                                 if(mCurrentFrame.mvpMapPoints[ip])
                                     sFound.insert(mCurrentFrame.mvpMapPoints[ip]);
-                            nadditional =matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,3,64);
+                            nadditional = matcher2.SearchByProjection(mCurrentFrame,vpCandidateKFs[i],sFound,3,64);
 
                             // Final optimization
                             if(nGood+nadditional>=50)
                             {
                                 nGood = Optimizer::PoseOptimization(&mCurrentFrame);
-
+	                            // 删除外点对应的地图点 直接设为空指针
                                 for(int io =0; io<mCurrentFrame.N; io++)
                                     if(mCurrentFrame.mvbOutlier[io])
                                         mCurrentFrame.mvpMapPoints[io]=NULL;
@@ -3944,21 +3950,25 @@ bool Tracking::Relocalization()
 
 
                 // If the pose is supported by enough inliers stop ransacs and continue
+	            // 如果对于当前的候选关键帧已经有足够的内点(50个)了,那么就认为重定位成功
                 if(nGood>=50)
                 {
                     bMatch = true;
+	                // 只要有一个候选关键帧重定位成功，就退出循环，不考虑其他候选关键帧了
                     break;
                 }
             }
         }
     }
-
+	// 重定位失败
     if(!bMatch)
     {
         return false;
     }
     else
     {
+	    // 如果匹配上了,说明当前帧重定位成功了(当前帧已经有了自己的位姿)
+	    // 记录成功重定位帧的id，防止短时间多次重定位
         mnLastRelocFrameId = mCurrentFrame.mnId;
         cout << "Relocalized!!" << endl;
         return true;
