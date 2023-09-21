@@ -526,29 +526,49 @@ Eigen::Vector3f Frame::GetRelativePoseTlr_translation() {
     return mTlr.translation();
 }
 
-
+/**
+ * @brief 判断路标点是否在视野中
+ * 步骤
+ * Step 1 获得这个地图点的世界坐标
+ * Step 2 关卡一：检查这个地图点在当前帧的相机坐标系下，是否有正的深度.如果是负的，表示出错，返回false
+ * Step 3 关卡二：将MapPoint投影到当前帧的像素坐标(u,v), 并判断是否在图像有效范围内
+ * Step 4 关卡三：计算MapPoint到相机中心的距离, 并判断是否在尺度变化的距离内
+ * Step 5 关卡四：计算当前相机指向地图点向量和地图点的平均观测方向夹角的余弦值, 若小于设定阈值，返回false
+ * Step 6 根据地图点到光心的距离来预测一个尺度（仿照特征点金字塔层级）
+ * Step 7 记录计算得到的一些参数
+ * @param[in] pMP                       当前地图点
+ * @param[in] viewingCosLimit           夹角余弦，用于限制地图点和光心连线和法线的夹角
+ * @return true                         地图点合格，且在视野内
+ * @return false                        地图点不合格，抛弃
+ */
 bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
 {
-    if(Nleft == -1){
+	// 单目 双目 RGBD
+    if(Nleft == -1)
+	{
+		// mbTrackInView是决定一个地图点是否进行重投影的标志 默认为false
         pMP->mbTrackInView = false;
         pMP->mTrackProjX = -1;
         pMP->mTrackProjY = -1;
 
         // 3D in absolute coordinates
+		// 获取地图点世界坐标
         Eigen::Matrix<float,3,1> P = pMP->GetWorldPos();
 
         // 3D in camera coordinates
+		// 转换到相机坐标系下
         const Eigen::Matrix<float,3,1> Pc = mRcw * P + mtcw;
         const float Pc_dist = Pc.norm();
 
         // Check positive depth
         const float &PcZ = Pc(2);
         const float invz = 1.0f/PcZ;
+		// 检查地图点在当前帧的相机坐标系下，是否有正的深度
         if(PcZ<0.0f)
             return false;
-
+		// 从相机坐标系投影到像素坐标系
         const Eigen::Vector2f uv = mpCamera->project(Pc);
-
+		// 判断像素是否在图像边界内
         if(uv(0)<mnMinX || uv(0)>mnMaxX)
             return false;
         if(uv(1)<mnMinY || uv(1)>mnMaxY)
@@ -558,8 +578,12 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
         pMP->mTrackProjY = uv(1);
 
         // Check distance is in the scale invariance region of the MapPoint
+		// 计算MapPoint到相机中心的距离 判断是否在尺度变化的距离内
+		// 可靠距离范围:[0.8f*mfMinDistance, 1.2f*mfMaxDistance]
         const float maxDistance = pMP->GetMaxDistanceInvariance();
         const float minDistance = pMP->GetMinDistanceInvariance();
+		// 得到当前地图点距离当前帧相机光心的距离 注意P，mOw都是在同一坐标系下
+		// mOw：当前相机光心在世界坐标系下坐标
         const Eigen::Vector3f PO = P - mOw;
         const float dist = PO.norm();
 
@@ -567,30 +591,40 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit)
             return false;
 
         // Check viewing angle
+		// 检验视角
         Eigen::Vector3f Pn = pMP->GetNormal();
-
+		// 求相机光心到地图点与地图点平均观测方向夹角余弦
         const float viewCos = PO.dot(Pn)/dist;
-
+		// 大于给定的阈值 cos(60°)=0.5 点方向太偏 重投影不可靠
         if(viewCos<viewingCosLimit)
             return false;
 
         // Predict scale in the image
+		// 根据地图点到光心的距离来预测一个尺度（仿照特征点金字塔层级）
         const int nPredictedLevel = pMP->PredictScale(dist,this);
 
         // Data used by the tracking
+		// 更新参数
+		// 标记MapPoint::mbTrackInView 表示地图点要被投影
         pMP->mbTrackInView = true;
+		// 该地图点投影在当前图像(左目图像)的像素横坐标
         pMP->mTrackProjX = uv(0);
+		// 双目/RGBD 对应右目图像  bf/z为视差 相减得到右图中对应点的横坐标
         pMP->mTrackProjXR = uv(0) - mbf*invz;
 
         pMP->mTrackDepth = Pc_dist;
-
+		// 该地图点投影在当前图像(左目图像)的像素总坐标
         pMP->mTrackProjY = uv(1);
+		// 根据地图点到光心距离，预测的该地图点的尺度层级
         pMP->mnTrackScaleLevel= nPredictedLevel;
+		// 保存当前视角和法线夹角的余弦值
         pMP->mTrackViewCos = viewCos;
 
         return true;
     }
-    else{
+	// fisheye
+    else
+	{
         pMP->mbTrackInView = false;
         pMP->mbTrackInViewR = false;
         pMP -> mnTrackScaleLevel = -1;

@@ -2108,18 +2108,25 @@ void Tracking::Track()
             }
             else
             {
+	            // mbVO是mbOnlyTracking为true时的才有的一个变量
+	            // mbVO为false表示此帧匹配了很多的MapPoints，跟踪很正常
+	            // mbVO为true表明此帧匹配了很少的MapPoints，少于10个，要跟丢
+				// 正常跟踪
                 if(!mbVO)
                 {
                     // In last frame we tracked enough MapPoints in the map
                     if(mbVelocity)
                     {
+	                    // 优先使用恒速模型跟踪
                         bOK = TrackWithMotionModel();
                     }
                     else
                     {
+	                    // 恒速模型不被满足,那么就只能够通过参考关键帧来跟踪
                         bOK = TrackReferenceKeyFrame();
                     }
                 }
+				// 将要跟踪丢失
                 else
                 {
                     // In last frame we tracked mainly "visual odometry" points.
@@ -2128,47 +2135,62 @@ void Tracking::Track()
                     // If relocalization is sucessfull we choose that solution, otherwise we retain
                     // the "visual odometry" solution.
 
+					// 标记使用运动模型跟踪结果
                     bool bOKMM = false;
+					// 标记使用重定位跟踪结果
                     bool bOKReloc = false;
+					// 运动模型构造地图点
                     vector<MapPoint*> vpMPsMM;
-                    vector<bool> vbOutMM;
+                    // 运动模型跟踪标记外点
+					vector<bool> vbOutMM;
+					// 运动模型解算相机位姿
                     Sophus::SE3f TcwMM;
+					// 运动模型有效时 根据运动模型计算位姿
                     if(mbVelocity)
                     {
+						// 运动模型跟踪
                         bOKMM = TrackWithMotionModel();
-                        vpMPsMM = mCurrentFrame.mvpMapPoints;
+                        // 保存相关变量
+						vpMPsMM = mCurrentFrame.mvpMapPoints;
                         vbOutMM = mCurrentFrame.mvbOutlier;
                         TcwMM = mCurrentFrame.GetPose();
                     }
+					// 记录重定位跟踪结果
                     bOKReloc = Relocalization();
-
+					// 恒速模型成功、重定位失败
                     if(bOKMM && !bOKReloc)
                     {
+	                    // 使用之前暂存的恒速模型结果
                         mCurrentFrame.SetPose(TcwMM);
                         mCurrentFrame.mvpMapPoints = vpMPsMM;
                         mCurrentFrame.mvbOutlier = vbOutMM;
 
                         if(mbVO)
                         {
-                            for(int i =0; i<mCurrentFrame.N; i++)
+	                        // 更新当前帧的地图点被找到次数，跟观测次数区分
+                            for(int i = 0; i<mCurrentFrame.N; i++)
                             {
+	                            // 如果这个特征点形成了地图点,并且也不是外点的时候
                                 if(mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvbOutlier[i])
                                 {
+	                                // 增加被找到次数
                                     mCurrentFrame.mvpMapPoints[i]->IncreaseFound();
                                 }
                             }
                         }
                     }
+					// 重定位成功
                     else if(bOKReloc)
                     {
+						// 后续正常进行 更新状态
                         mbVO = false;
                     }
-
+					// 重定位或者运动模型跟踪成功则更新状态
                     bOK = bOKReloc || bOKMM;
                 }
             }
         }
-
+		// 将最新的关键帧作为当前帧的参考关键帧
         if(!mCurrentFrame.mpReferenceKF)
             mCurrentFrame.mpReferenceKF = mpReferenceKF;
 
@@ -2183,8 +2205,10 @@ void Tracking::Track()
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_StartLMTrack = std::chrono::steady_clock::now();
 #endif
+	    // 跟踪得到当前帧初始姿态后，现在对local map(当前帧、MapPoints、与其它关键帧共视关系)进行跟踪得到更多的匹配，并优化当前位姿
+	    // 将局部MapPoints和当前帧进行投影匹配，得到更多匹配的MapPoints后进行Pose优化
         // If we have an initial estimation of the camera pose and matching. Track the local map.
-		// 有初始估计和局部地图
+		// 对相机位姿和匹配有初始估计 后跟踪局部地图
         if(!mbOnlyTracking)
         {
             if(bOK)
@@ -2203,11 +2227,14 @@ void Tracking::Track()
             if(bOK && !mbVO)
                 bOK = TrackLocalMap();
         }
-
+		// 根据跟踪局部地图状态判断状态
+	    // 跟踪地图成功
         if(bOK)
             mState = OK;
+		// 第一阶段跟踪成功 第二阶段跟踪局部地图失败
         else if (mState == OK)
         {
+			// IMU
             if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
             {
                 Verbose::PrintMess("Track lost for less than one second...", Verbose::VERBOSITY_NORMAL);
@@ -2219,7 +2246,8 @@ void Tracking::Track()
 
                 mState=RECENTLY_LOST;
             }
-            else
+            // 视觉跟踪接近丢失
+			else
                 mState=RECENTLY_LOST; // visual to lost
 
             /*if(mCurrentFrame.mnId>mnLastRelocFrameId+mMaxFrames)
@@ -2229,7 +2257,8 @@ void Tracking::Track()
         }
 
         // Save frame if recent relocalization, since they are used for IMU reset (as we are making copy, it shluld be once mCurrFrame is completely modified)
-        if((mCurrentFrame.mnId<(mnLastRelocFrameId+mnFramesToResetIMU)) && (mCurrentFrame.mnId > mnFramesToResetIMU) &&
+        // IMU 且 刚完成IMU重置
+		if((mCurrentFrame.mnId<(mnLastRelocFrameId+mnFramesToResetIMU)) && (mCurrentFrame.mnId > mnFramesToResetIMU) &&
            (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD) && pCurrentMap->isImuInitialized())
         {
             // TODO check this situation
@@ -2240,7 +2269,7 @@ void Tracking::Track()
             // Load preintegration
             pF->mpImuPreintegratedFrame = new IMU::Preintegrated(mCurrentFrame.mpImuPreintegratedFrame);
         }
-
+		// IMU 状态 未实现
         if(pCurrentMap->isImuInitialized())
         {
             if(bOK)
@@ -2267,24 +2296,28 @@ void Tracking::Track()
         mpFrameDrawer->Update(this);
         if(mCurrentFrame.isSet())
             mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.GetPose());
-
+	    //  跟踪成功 或 刚刚跟丢，更新速度，清除无效地图点，按需创建关键帧
         if(bOK || mState==RECENTLY_LOST)
         {
             // Update motion model
+			// 更新恒速运动模型中的mVelocity
             if(mLastFrame.isSet() && mCurrentFrame.isSet())
             {
+				// T_wc'
                 Sophus::SE3f LastTwc = mLastFrame.GetPose().inverse();
-                mVelocity = mCurrentFrame.GetPose() * LastTwc;
+                // 上一帧到当前帧的位姿变换 T_cc' = T_cw * T_wc'
+				mVelocity = mCurrentFrame.GetPose() * LastTwc;
                 mbVelocity = true;
             }
             else {
                 mbVelocity = false;
             }
-
+			// IMU
             if(mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
                 mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.GetPose());
 
             // Clean VO matches
+			// 清除观测不到的地图点
             for(int i=0; i<mCurrentFrame.N; i++)
             {
                 MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
@@ -2297,6 +2330,9 @@ void Tracking::Track()
             }
 
             // Delete temporal MapPoints
+	        // 清除恒速模型跟踪中 UpdateLastFrame中为当前帧临时添加的MapPoints(仅双目和rgbd)
+	        // 上个步骤中只是在当前帧中将这些MapPoints剔除，这里从MapPoints数据库中删除
+	        // 临时地图点仅仅是为了提高双目或rgbd摄像头的帧间跟踪效果，用完以后就扔了，没有添加到地图中
             for(list<MapPoint*>::iterator lit = mlpTemporalPoints.begin(), lend =  mlpTemporalPoints.end(); lit!=lend; lit++)
             {
                 MapPoint* pMP = *lit;
@@ -2334,14 +2370,16 @@ void Tracking::Track()
         }
 
         // Reset if the camera get lost soon after initialization
-		// 相机初始化后跟踪丢失进行reset
+		// 第二阶段(相机初始化后)跟踪丢失进行reset
         if(mState==LOST)
         {
+			// 当前地图中关键帧<=10 重置地图 退出跟踪
             if(pCurrentMap->KeyFramesInMap()<=10)
             {
                 mpSystem->ResetActiveMap();
                 return;
             }
+			// IMU未初始化 重置地图 退出跟踪
             if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
                 if (!pCurrentMap->isImuInitialized())
                 {
@@ -2349,25 +2387,26 @@ void Tracking::Track()
                     mpSystem->ResetActiveMap();
                     return;
                 }
-
+	        // 如果地图中关键帧超过10 并且 纯视觉模式 或 虽然是IMU模式但是已经完成IMU初始化了，保存当前地图，创建新的地图
             CreateMapInAtlas();
 
             return;
         }
-
+		// 设置当前帧的参考关键帧
         if(!mCurrentFrame.mpReferenceKF)
             mCurrentFrame.mpReferenceKF = mpReferenceKF;
-
+		// 更新上一帧为当前帧
         mLastFrame = Frame(mCurrentFrame);
     }
 
-
-    if(mState==OK || mState==RECENTLY_LOST)
+	// 记录位姿信息，用于最后保存所有的轨迹
+	if(mState==OK || mState==RECENTLY_LOST)
     {
         // Store frame pose information to retrieve the complete camera trajectory afterwards.
+		// 存储位姿信息
         if(mCurrentFrame.isSet())
         {
-			// 参考关键帧到当前帧位姿变换
+			// 参考关键帧到当前帧位姿变换 Tcr = Tcw * Twr, Twr = Trw^-1
             Sophus::SE3f Tcr_ = mCurrentFrame.GetPose() * mCurrentFrame.mpReferenceKF->GetPoseInverse();
             mlRelativeFramePoses.push_back(Tcr_);
             mlpReferences.push_back(mCurrentFrame.mpReferenceKF);
@@ -3104,18 +3143,32 @@ bool Tracking::TrackWithMotionModel()
 	    // 成功匹配超过10个地图点 跟踪成功
         return nmatchesMap>=10;
 }
-
+/**
+ * @brief 用局部地图进行跟踪，进一步优化位姿
+ * 1. 更新局部地图，包括局部关键帧和关键点
+ * 2. 对局部MapPoints进行投影匹配
+ * 3. 根据匹配对估计当前帧的姿态
+ * 4. 根据姿态剔除误匹配
+ * @return true if success
+ * Step 1：更新局部关键帧mvpLocalKeyFrames和局部地图点mvpLocalMapPoints
+ * Step 2：在局部地图中查找与当前帧匹配的MapPoints, 其实也就是对局部地图点进行跟踪
+ * Step 3：更新局部所有MapPoints后对位姿再次优化
+ * Step 4：更新当前帧的MapPoints被观测程度，并统计跟踪局部地图的效果
+ * Step 5：决定是否跟踪成功
+ */
 bool Tracking::TrackLocalMap()
 {
 
     // We have an estimation of the camera pose and some map points tracked in the frame.
     // We retrieve the local map and try to find matches to points in the local map.
     mTrackedFr++;
-
+	// 更新局部关键帧 mvpLocalKeyFrames 和局部地图点 mvpLocalMapPoints
     UpdateLocalMap();
+	// 筛选局部地图中新增的在视野范围内的地图点，投影到当前帧搜索匹配，得到更多的匹配关系
     SearchLocalPoints();
 
-    // TOO check outliers before PO
+    //  check outliers before PO
+	// 查看内点、外点数 调试用
     int aux1 = 0, aux2=0;
     for(int i=0; i<mCurrentFrame.N; i++)
         if( mCurrentFrame.mvpMapPoints[i])
@@ -3126,15 +3179,19 @@ bool Tracking::TrackLocalMap()
         }
 
     int inliers;
+	// 新增了匹配约束 再次进行位姿优化
+	// IMU未初始化，仅优化位姿
     if (!mpAtlas->isImuInitialized())
         Optimizer::PoseOptimization(&mCurrentFrame);
     else
     {
+	    // 初始化，重定位，重新开启一个地图都会使mnLastRelocFrameId变化
         if(mCurrentFrame.mnId<=mnLastRelocFrameId+mnFramesToResetIMU)
         {
             Verbose::PrintMess("TLM: PoseOptimization ", Verbose::VERBOSITY_DEBUG);
             Optimizer::PoseOptimization(&mCurrentFrame);
         }
+		// IMU数据足够 加入IMU约束优化
         else
         {
             // if(!mbMapUpdated && mState == OK) //  && (mnMatchesInliers>30))
@@ -3150,7 +3207,7 @@ bool Tracking::TrackLocalMap()
             }
         }
     }
-
+	// 查看内点、外点数 调试用
     aux1 = 0, aux2 = 0;
     for(int i=0; i<mCurrentFrame.N; i++)
         if( mCurrentFrame.mvpMapPoints[i])
@@ -3163,6 +3220,7 @@ bool Tracking::TrackLocalMap()
     mnMatchesInliers = 0;
 
     // Update MapPoints Statistics
+	// 更新当前帧的地图点被观测程度，并统计跟踪局部地图后匹配数目
     for(int i=0; i<mCurrentFrame.N; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
@@ -3170,14 +3228,19 @@ bool Tracking::TrackLocalMap()
             if(!mCurrentFrame.mvbOutlier[i])
             {
                 mCurrentFrame.mvpMapPoints[i]->IncreaseFound();
+				// 正常模式
                 if(!mbOnlyTracking)
                 {
+	                // 如果该地图点被相机观测数目nObs大于0，匹配内点计数+1
+	                // nObs： 被观测到的相机数目，单目+1，双目或RGB-D+2
                     if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
                         mnMatchesInliers++;
                 }
                 else
                     mnMatchesInliers++;
             }
+            // 如果地图点是外点 且 双目 删除这个点
+            // 双目本身可以左右互匹配，删掉无所谓
             else if(mSensor==System::STEREO)
                 mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
         }
@@ -3185,14 +3248,16 @@ bool Tracking::TrackLocalMap()
 
     // Decide if the tracking was succesful
     // More restrictive if there was a relocalization recently
+	// 判断当前跟踪状态 如果刚成功重定位约束增加
     mpLocalMapper->mnMatchesInliers=mnMatchesInliers;
+	// 刚刚发生重定位 且 匹配内点<50 失败
     if(mCurrentFrame.mnId<mnLastRelocFrameId+mMaxFrames && mnMatchesInliers<50)
         return false;
-
+	// 匹配内点>10 且 状态为RECENTLY_LOST 成功
     if((mnMatchesInliers>10)&&(mState==RECENTLY_LOST))
         return true;
 
-
+	// 单目+IMU
     if (mSensor == System::IMU_MONOCULAR)
     {
         if((mnMatchesInliers<15 && mpAtlas->isImuInitialized())||(mnMatchesInliers<50 && !mpAtlas->isImuInitialized()))
@@ -3202,7 +3267,8 @@ bool Tracking::TrackLocalMap()
         else
             return true;
     }
-    else if (mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
+    // 双目/RGBD+IMU
+	else if (mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
     {
         if(mnMatchesInliers<15)
         {
@@ -3211,8 +3277,10 @@ bool Tracking::TrackLocalMap()
         else
             return true;
     }
+	// Mono
     else
     {
+		// 匹配内点<30 失败 否则成功
         if(mnMatchesInliers<30)
             return false;
         else
@@ -3498,10 +3566,14 @@ void Tracking::CreateNewKeyFrame()
     mnLastKeyFrameId = mCurrentFrame.mnId;
     mpLastKeyFrame = pKF;
 }
-
+/**
+ * @brief 用局部地图点进行投影匹配，得到更多的匹配关系
+ * 注意：局部地图点中已经是当前帧地图点的不需要再投影，只需要将此外的并且在视野范围内的点和当前帧进行投影匹配
+ */
 void Tracking::SearchLocalPoints()
 {
     // Do not search map points already matched
+	// 遍历当前帧的地图点 标记地图点不参与之后的投影搜索
     for(vector<MapPoint*>::iterator vit=mCurrentFrame.mvpMapPoints.begin(), vend=mCurrentFrame.mvpMapPoints.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
@@ -3513,37 +3585,45 @@ void Tracking::SearchLocalPoints()
             }
             else
             {
+	            // 更新能观测到该点的帧数加1
                 pMP->IncreaseVisible();
+				// 标记该地图点被当前帧观测到
                 pMP->mnLastFrameSeen = mCurrentFrame.mnId;
+	            // 标记该点在后面搜索匹配时不被投影 已经有匹配
                 pMP->mbTrackInView = false;
                 pMP->mbTrackInViewR = false;
             }
         }
     }
-
+	// 准备进行投影匹配点的数目
     int nToMatch=0;
 
     // Project points in frame and check its visibility
+	// 遍历局部地图点
     for(vector<MapPoint*>::iterator vit=mvpLocalMapPoints.begin(), vend=mvpLocalMapPoints.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
-
+	    // 已经被当前帧观测到的地图点 跳过
         if(pMP->mnLastFrameSeen == mCurrentFrame.mnId)
             continue;
         if(pMP->isBad())
             continue;
         // Project (this fills MapPoint variables for matching)
+	    // 判断地图点是否在在当前帧视野内
         if(mCurrentFrame.isInFrustum(pMP,0.5))
         {
+	        // 观测到该点的帧数加1
             pMP->IncreaseVisible();
+	        // 在视野范围内的地图点 参与之后的投影匹配
             nToMatch++;
         }
+		// 地图点被标记需要投影
         if(pMP->mbTrackInView)
         {
             mCurrentFrame.mmProjectPoints[pMP->mnId] = cv::Point2f(pMP->mTrackProjX, pMP->mTrackProjY);
         }
     }
-
+	// 如果需要进行投影匹配的点的数目大于0，就进行投影匹配，增加更多的匹配关系
     if(nToMatch>0)
     {
         ORBmatcher matcher(0.8);
@@ -3563,69 +3643,100 @@ void Tracking::SearchLocalPoints()
         }
 
         // If the camera has been relocalised recently, perform a coarser search
+	    // 刚刚进行过重定位 增大搜索阈值
         if(mCurrentFrame.mnId<mnLastRelocFrameId+2)
             th=5;
 
         if(mState==LOST || mState==RECENTLY_LOST) // Lost for less than 1 second
             th=15; // 15
-
+	    // 投影匹配得到更多的匹配关系
         int matches = matcher.SearchByProjection(mCurrentFrame, mvpLocalMapPoints, th, mpLocalMapper->mbFarPoints, mpLocalMapper->mThFarPoints);
     }
 }
-
+/**
+ * @brief 更新LocalMap
+ * 局部地图包括：
+ * 1、K1个关键帧、K2个临近关键帧和参考关键帧
+ * 2、由这些关键帧观测到的MapPoints
+ */
 void Tracking::UpdateLocalMap()
 {
     // This is for visualization
+	// 设置参考地图点用于绘图显示局部地图点（红色）
     mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);
 
     // Update
+	// 用共视图来更新局部关键帧和局部地图点
     UpdateLocalKeyFrames();
     UpdateLocalPoints();
 }
-
+/**
+ * @brief 更新局部关键点
+ * 先把局部地图清空，然后将局部关键帧的有效地图点添加到局部地图中
+ */
 void Tracking::UpdateLocalPoints()
 {
+	// 清空局部地图点
     mvpLocalMapPoints.clear();
 
     int count_pts = 0;
-
+	// 遍历局部关键帧vector
     for(vector<KeyFrame*>::const_reverse_iterator itKF=mvpLocalKeyFrames.rbegin(), itEndKF=mvpLocalKeyFrames.rend(); itKF!=itEndKF; ++itKF)
     {
         KeyFrame* pKF = *itKF;
         const vector<MapPoint*> vpMPs = pKF->GetMapPointMatches();
-
+		// 遍历关键帧的地图点
         for(vector<MapPoint*>::const_iterator itMP=vpMPs.begin(), itEndMP=vpMPs.end(); itMP!=itEndMP; itMP++)
         {
 
             MapPoint* pMP = *itMP;
             if(!pMP)
                 continue;
+	        // 已经是当前帧的局部地图点了 防止重复添加局部地图点
             if(pMP->mnTrackReferenceForFrame==mCurrentFrame.mnId)
                 continue;
             if(!pMP->isBad())
             {
                 count_pts++;
+				// 保存到局部地图点vector
                 mvpLocalMapPoints.push_back(pMP);
+	            // 用该地图点的成员变量mnTrackReferenceForFrame 记录当前帧的id
+	            // 更新标记防止重复添加
                 pMP->mnTrackReferenceForFrame=mCurrentFrame.mnId;
             }
         }
     }
 }
-
+/**
+ * @brief 跟踪局部地图函数，更新局部关键帧
+ * 方法是遍历当前帧的地图点，将观测到这些地图点的关键帧和相邻的关键帧及其父子关键帧，作为mvpLocalKeyFrames
+ * Step 1：遍历当前帧的地图点，记录所有能观测到当前帧地图点的关键帧
+ * Step 2：更新局部关键帧（mvpLocalKeyFrames），添加局部关键帧包括以下3种类型
+ *      类型1：能观测到当前帧地图点的关键帧，也称一级共视关键帧
+ *      类型2：一级共视关键帧的共视关键帧，称为二级共视关键帧
+ *      类型3：一级共视关键帧的子关键帧、父关键帧
+ * Step 3：更新当前帧的参考关键帧，与自己共视程度最高的关键帧作为参考关键帧
+ */
 void Tracking::UpdateLocalKeyFrames()
 {
     // Each map point vote for the keyframes in which it has been observed
+	// 遍历当前帧的地图点，记录所有能观测到当前帧地图点的关键帧
     map<KeyFrame*,int> keyframeCounter;
+	// 如果IMU未初始化 或者 刚刚完成重定位
     if(!mpAtlas->isImuInitialized() || (mCurrentFrame.mnId<mnLastRelocFrameId+2))
     {
-        for(int i=0; i<mCurrentFrame.N; i++)
+		// 遍历当前帧地图点(特征点个数)
+        for(int i = 0; i < mCurrentFrame.N; i++)
         {
             MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
             if(pMP)
             {
                 if(!pMP->isBad())
                 {
+					// 获取地图点观测
                     const map<KeyFrame*,tuple<int,int>> observations = pMP->GetObservations();
+					// 遍历观测更新关键帧共视信息
+					// 所以最后keyframeCounter 参数1表示某个关键帧 参数2表示关键帧观测到当前帧的地图点数，即共视程度
                     for(map<KeyFrame*,tuple<int,int>>::const_iterator it=observations.begin(), itend=observations.end(); it!=itend; it++)
                         keyframeCounter[it->first]++;
                 }
@@ -3636,8 +3747,10 @@ void Tracking::UpdateLocalKeyFrames()
             }
         }
     }
+	// 使用IMU初始化 且 短时间未发生重定位
     else
     {
+	    // IMU初始化后用mLastFrame mLastFrame存储的是上一帧跟踪成功后帧数据
         for(int i=0; i<mLastFrame.N; i++)
         {
             // Using lastframe since current frame has not matches yet
@@ -3669,49 +3782,56 @@ void Tracking::UpdateLocalKeyFrames()
     mvpLocalKeyFrames.reserve(3*keyframeCounter.size());
 
     // All keyframes that observe a map point are included in the local map. Also check which keyframe shares most points
-    for(map<KeyFrame*,int>::const_iterator it=keyframeCounter.begin(), itEnd=keyframeCounter.end(); it!=itEnd; it++)
+    // 遍历能观测到当前帧的关键帧 保存为一级共视关键帧
+	for(map<KeyFrame*,int>::const_iterator it=keyframeCounter.begin(), itEnd=keyframeCounter.end(); it!=itEnd; it++)
     {
         KeyFrame* pKF = it->first;
 
         if(pKF->isBad())
             continue;
-
+		// 找到共视程度最高关键帧及数目
         if(it->second>max)
         {
             max=it->second;
             pKFmax=pKF;
         }
-
+		// 保存到局部关键帧vector
         mvpLocalKeyFrames.push_back(pKF);
+		// 更新关键帧的mnTrackReferenceForFrame(default=0)属性为当前帧id 防止重复添加
         pKF->mnTrackReferenceForFrame = mCurrentFrame.mnId;
     }
 
     // Include also some not-already-included keyframes that are neighbors to already-included keyframes
+	// 遍历已保存到局部关键帧vector中的关键帧
     for(vector<KeyFrame*>::const_iterator itKF=mvpLocalKeyFrames.begin(), itEndKF=mvpLocalKeyFrames.end(); itKF!=itEndKF; itKF++)
     {
         // Limit the number of keyframes
+		// 限制局部关键帧规模
         if(mvpLocalKeyFrames.size()>80) // 80
             break;
 
         KeyFrame* pKF = *itKF;
-
+	    // 一级共视关键帧的共视大小(前10)关键帧，称为二级共视关键帧
         const vector<KeyFrame*> vNeighs = pKF->GetBestCovisibilityKeyFrames(10);
 
-
+		// 遍历二级共视关键帧
         for(vector<KeyFrame*>::const_iterator itNeighKF=vNeighs.begin(), itEndNeighKF=vNeighs.end(); itNeighKF!=itEndNeighKF; itNeighKF++)
         {
             KeyFrame* pNeighKF = *itNeighKF;
             if(!pNeighKF->isBad())
             {
+				// 防止重复添加关键帧
                 if(pNeighKF->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
                 {
                     mvpLocalKeyFrames.push_back(pNeighKF);
+					// 更新标记
                     pNeighKF->mnTrackReferenceForFrame=mCurrentFrame.mnId;
                     break;
                 }
             }
         }
-
+		// 将一级共视关键帧的子关键帧作为局部关键帧
+		// 取出子关键帧(父关键帧是子关键帧共视关系最大的关键帧)
         const set<KeyFrame*> spChilds = pKF->GetChilds();
         for(set<KeyFrame*>::const_iterator sit=spChilds.begin(), send=spChilds.end(); sit!=send; sit++)
         {
@@ -3720,13 +3840,14 @@ void Tracking::UpdateLocalKeyFrames()
             {
                 if(pChildKF->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
                 {
+					// 保存到局部关键帧
                     mvpLocalKeyFrames.push_back(pChildKF);
                     pChildKF->mnTrackReferenceForFrame=mCurrentFrame.mnId;
                     break;
                 }
             }
         }
-
+	    // 一级共视关键帧的父关键帧作为局部关键帧
         KeyFrame* pParent = pKF->GetParent();
         if(pParent)
         {
@@ -3740,6 +3861,7 @@ void Tracking::UpdateLocalKeyFrames()
     }
 
     // Add 10 last temporal KFs (mainly for IMU)
+	// IMU模式下增加了临时的关键帧
     if((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD) &&mvpLocalKeyFrames.size()<80)
     {
         KeyFrame* tempKeyFrame = mCurrentFrame.mpLastKeyFrame;
@@ -3756,7 +3878,8 @@ void Tracking::UpdateLocalKeyFrames()
             }
         }
     }
-
+	// 更新当前帧的参考关键帧
+	// 与当前帧共视程度最高的关键帧作为参考关键帧
     if(pKFmax)
     {
         mpReferenceKF = pKFmax;

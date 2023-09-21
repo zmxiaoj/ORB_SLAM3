@@ -323,7 +323,7 @@ bool MapPoint::isBad()
 
     return mbBad;
 }
-
+// default n = 1
 void MapPoint::IncreaseVisible(int n)
 {
     unique_lock<mutex> lock(mMutexFeatures);
@@ -571,7 +571,12 @@ int MapPoint::PredictScale(const float &currentDist, KeyFrame* pKF)
 
     return nScale;
 }
-
+/**
+ * @brief 根据地图点到光心的距离来预测一个类似特征金字塔的尺度
+ * @param[in] currentDist       地图点到光心的距离
+ * @param[in] pF                当前帧
+ * @return int                  尺度
+ */
 int MapPoint::PredictScale(const float &currentDist, Frame* pF)
 {
     float ratio;

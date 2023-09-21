@@ -326,6 +326,7 @@ public:
     GeometricCamera* mpCamera, *mpCamera2;
 
     //Number of KeyPoints extracted in the left and right images
+	// for fisheye
     int Nleft, Nright;
     //Number of Non Lapping Keypoints
     int monoLeft, monoRight;

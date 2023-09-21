@@ -266,10 +266,15 @@ vector<KeyFrame*> KeyFrame::GetVectorCovisibleKeyFrames()
     unique_lock<mutex> lock(mMutexConnections);
     return mvpOrderedConnectedKeyFrames;
 }
-
+/**
+ * @brief 获取与当前关键帧共视关系最大的N个关键帧
+ * @param N
+ * @return vector<KeyFrame*>
+ */
 vector<KeyFrame*> KeyFrame::GetBestCovisibilityKeyFrames(const int &N)
 {
     unique_lock<mutex> lock(mMutexConnections);
+	// 如果数目不够返回全部关键帧
     if((int)mvpOrderedConnectedKeyFrames.size()<N)
         return mvpOrderedConnectedKeyFrames;
     else

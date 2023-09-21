@@ -39,13 +39,21 @@ namespace ORB_SLAM3
     ORBmatcher::ORBmatcher(float nnratio, bool checkOri): mfNNratio(nnratio), mbCheckOrientation(checkOri)
     {
     }
-
+	/**
+	 * @brief 用于Tracking::SearchLocalPoints中匹配更多地图点
+	 * @param F
+	 * @param vpMapPoints
+	 * @param th
+	 * @param bFarPoints
+	 * @param thFarPoints
+	 * @return
+	 */
     int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoints, const float th, const bool bFarPoints, const float thFarPoints)
     {
         int nmatches=0, left = 0, right = 0;
-
+	    // 如果 th！=1 (RGBD 相机或者刚刚进行过重定位) 需要扩大范围搜索
         const bool bFactor = th!=1.0;
-
+		// 遍历地图点
         for(size_t iMP=0; iMP<vpMapPoints.size(); iMP++)
         {
             MapPoint* pMP = vpMapPoints[iMP];
@@ -63,11 +71,12 @@ namespace ORB_SLAM3
                 const int &nPredictedLevel = pMP->mnTrackScaleLevel;
 
                 // The size of the window will depend on the viewing direction
+				// 根据夹角余弦选择搜索半径
                 float r = RadiusByViewingCos(pMP->mTrackViewCos);
 
                 if(bFactor)
                     r*=th;
-
+				// 确定特征点所在网格
                 const vector<size_t> vIndices =
                         F.GetFeaturesInArea(pMP->mTrackProjX,pMP->mTrackProjY,r*F.mvScaleFactors[nPredictedLevel],nPredictedLevel-1,nPredictedLevel);
 
@@ -81,6 +90,7 @@ namespace ORB_SLAM3
                     int bestIdx =-1 ;
 
                     // Get best and second matches with near keypoints
+					// 找到最优和次优距离对应特征点
                     for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
                     {
                         const size_t idx = *vit;
@@ -120,6 +130,7 @@ namespace ORB_SLAM3
                     }
 
                     // Apply ratio to second match (only if best and second are in the same scale level)
+					// 检验方向
                     if(bestDist<=TH_HIGH)
                     {
                         if(bestLevel==bestLevel2 && bestDist>mfNNratio*bestDist2)
@@ -140,7 +151,7 @@ namespace ORB_SLAM3
                     }
                 }
             }
-
+			// fisheye
             if(F.Nleft != -1 && pMP->mbTrackInViewR){
                 const int &nPredictedLevel = pMP->mnTrackScaleLevelR;
                 if(nPredictedLevel != -1){

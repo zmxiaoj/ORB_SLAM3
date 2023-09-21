@@ -898,7 +898,7 @@ namespace ORB_SLAM3 {
         }
         return omega;
     }
-
+	// todo mlpnp 使用gn迭代优化
     void MLPnPsolver::mlpnp_gn(Eigen::VectorXd &x, const points_t &pts, const std::vector<Eigen::MatrixXd> &nullspaces,
                                const Eigen::SparseMatrix<double> Kll, bool use_cov) {
         const int numObservations = pts.size();
