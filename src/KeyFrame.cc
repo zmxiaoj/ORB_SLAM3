@@ -368,7 +368,11 @@ set<MapPoint*> KeyFrame::GetMapPoints()
     }
     return s;
 }
-
+/**
+ * @brief 统计关键帧中地图点(观测>=minObs，可选择)的数目 认为是被追踪到的
+ * @param minObs
+ * @return int
+ */
 int KeyFrame::TrackedMapPoints(const int &minObs)
 {
     unique_lock<mutex> lock(mMutexFeatures);
@@ -395,7 +399,10 @@ int KeyFrame::TrackedMapPoints(const int &minObs)
 
     return nPoints;
 }
-
+/**
+ * @brief 获取当前关键帧的具体的地图点
+ * @return
+ */
 vector<MapPoint*> KeyFrame::GetMapPointMatches()
 {
     unique_lock<mutex> lock(mMutexFeatures);

@@ -416,7 +416,14 @@ Sophus::SE3f System::TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, const
     mTrackedKeyPointsUn = mpTracker->mCurrentFrame.mvKeysUn;
     return Tcw;
 }
-
+/**
+ * @brief
+ * @param im
+ * @param timestamp
+ * @param vImuMeas
+ * @param filename
+ * @return 跟踪的相机位姿
+ */
 Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp, const vector<IMU::Point>& vImuMeas, string filename)
 {
 	// 只在{}作用域内具有mMutexReset权限，保证在作用域内安全

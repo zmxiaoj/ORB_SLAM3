@@ -60,17 +60,22 @@ void LocalMapping::SetTracker(Tracking *pTracker)
 {
     mpTracker = pTracker;
 }
-
+/**
+ * @brief 局部地图线程主函数
+ */
 void LocalMapping::Run()
 {
+	// 标记状态 run函数正在运行 尚未结束
     mbFinished = false;
-
+	// 主循环
     while(1)
     {
         // Tracking will see that Local Mapping is busy
+		// 设定标记 向Tracking线程通知Local Mapping正处于繁忙状态不接受关键帧
         SetAcceptKeyFrames(false);
 
         // Check if there are keyframes in the queue
+		// 待处理关键帧队列非空 且 IMU正常
         if(CheckNewKeyFrames() && !mbBadImu)
         {
 #ifdef REGISTER_TIMES
@@ -80,6 +85,7 @@ void LocalMapping::Run()
             std::chrono::steady_clock::time_point time_StartProcessKF = std::chrono::steady_clock::now();
 #endif
             // BoW conversion and insertion in Map
+			// 处理队列中的关键帧
             ProcessNewKeyFrame();
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndProcessKF = std::chrono::steady_clock::now();
@@ -89,6 +95,7 @@ void LocalMapping::Run()
 #endif
 
             // Check recent MapPoints
+			// 检查最近的地图点并剔除
             MapPointCulling();
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndMPCulling = std::chrono::steady_clock::now();
@@ -98,13 +105,15 @@ void LocalMapping::Run()
 #endif
 
             // Triangulate new MapPoints
+			// 三角化构成新的地图点
             CreateNewMapPoints();
 
             mbAbortBA = false;
-
+			// 待处理新关键帧队列已空
             if(!CheckNewKeyFrames())
             {
                 // Find more matches in neighbor keyframes and fuse point duplications
+				// 在相邻关键帧中搜索匹配 并 融合重复的地图点
                 SearchInNeighbors();
             }
 
@@ -120,7 +129,7 @@ void LocalMapping::Run()
             int num_OptKF_BA = 0;
             int num_MPs_BA = 0;
             int num_edges_BA = 0;
-
+			// 无新的关键帧 且 线程无需停止
             if(!CheckNewKeyFrames() && !stopRequested())
             {
                 if(mpAtlas->KeyFramesInMap()>2)
@@ -178,6 +187,7 @@ void LocalMapping::Run()
 #endif
 
                 // Initialize IMU here
+				// 初始化IMU
                 if(!mpCurrentKeyFrame->GetMap()->isImuInitialized() && mbInertial)
                 {
                     if (mbMonocular)
@@ -188,6 +198,7 @@ void LocalMapping::Run()
 
 
                 // Check redundant local Keyframes
+				// 删除冗余关键帧
                 KeyFrameCulling();
 
 #ifdef REGISTER_TIMES
@@ -246,7 +257,7 @@ void LocalMapping::Run()
             vdLBASync_ms.push_back(timeKFCulling_ms);
             vdKFCullingSync_ms.push_back(timeKFCulling_ms);
 #endif
-
+			// 向回环检测线程插入当前关键帧
             mpLoopCloser->InsertKeyFrame(mpCurrentKeyFrame);
 
 #ifdef REGISTER_TIMES
@@ -256,28 +267,32 @@ void LocalMapping::Run()
             vdLMTotal_ms.push_back(timeLocalMap);
 #endif
         }
+		// 需要终止局部建图线程
         else if(Stop() && !mbBadImu)
         {
             // Safe area to stop
+			// 尚未彻底结束 等待
             while(isStopped() && !CheckFinish())
             {
                 usleep(3000);
             }
+			// 结束 跳出循环
             if(CheckFinish())
                 break;
         }
-
+		// 处理是否需要重置线程
         ResetIfRequested();
 
         // Tracking will see that Local Mapping is busy
+		// 标记 可接受关键帧
         SetAcceptKeyFrames(true);
-
+		// 检测到线程结束跳出循环
         if(CheckFinish())
             break;
-
+		// 休眠 3000us = 3ms
         usleep(3000);
     }
-
+	// 设置线程已经终止
     SetFinish();
 }
 
@@ -294,21 +309,26 @@ bool LocalMapping::CheckNewKeyFrames()
     unique_lock<mutex> lock(mMutexNewKFs);
     return(!mlNewKeyFrames.empty());
 }
-
+/**
+ * @brief 处理队列中新的关键帧
+ */
 void LocalMapping::ProcessNewKeyFrame()
 {
     {
         unique_lock<mutex> lock(mMutexNewKFs);
+		// 取出队列头的关键帧
         mpCurrentKeyFrame = mlNewKeyFrames.front();
         mlNewKeyFrames.pop_front();
     }
 
     // Compute Bags of Words structures
+	// 计算当前关键帧的BoW
     mpCurrentKeyFrame->ComputeBoW();
 
     // Associate MapPoints to the new keyframe and update normal and descriptor
+	// 取出与当前帧特征点关联的地图点
     const vector<MapPoint*> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
-
+	// 遍历地图点
     for(size_t i=0; i<vpMapPointMatches.size(); i++)
     {
         MapPoint* pMP = vpMapPointMatches[i];
@@ -316,14 +336,21 @@ void LocalMapping::ProcessNewKeyFrame()
         {
             if(!pMP->isBad())
             {
+				// 对地图点存在观测的关键帧中不包括当前关键帧
                 if(!pMP->IsInKeyFrame(mpCurrentKeyFrame))
                 {
+					// 对地图点增加当前关键帧的观测
                     pMP->AddObservation(mpCurrentKeyFrame, i);
+					// 计算地图点的平均观测方向和观测距离范围
                     pMP->UpdateNormalAndDepth();
+					// 计算地图点的代表描述子
                     pMP->ComputeDistinctiveDescriptors();
                 }
                 else // this can only happen for new stereo points inserted by the Tracking
                 {
+	                // 如果当前帧中已经包含了这个地图点,但是这个地图点中却没有包含这个关键帧的信息
+	                // 这些地图点可能来自双目或RGBD跟踪过程中新生成的地图点，或者是CreateNewMapPoints 中通过三角化产生
+	                // 将上述地图点放入mlpRecentAddedMapPoints，等待后续MapPointCulling函数的检验
                     mlpRecentAddedMapPoints.push_back(pMP);
                 }
             }
@@ -331,9 +358,11 @@ void LocalMapping::ProcessNewKeyFrame()
     }
 
     // Update links in the Covisibility Graph
+	// 更新共视图
     mpCurrentKeyFrame->UpdateConnections();
 
     // Insert Keyframe in Map
+	// 将关键帧插入地图
     mpAtlas->AddKeyFrame(mpCurrentKeyFrame);
 }
 
@@ -342,13 +371,16 @@ void LocalMapping::EmptyQueue()
     while(CheckNewKeyFrames())
         ProcessNewKeyFrame();
 }
-
+/**
+ * @brief 检查新增地图点，根据地图点的观测情况剔除质量不好的新增的地图点
+ * mlpRecentAddedMapPoints: 存储新增的地图点，这里是要删除其中不靠谱的
+ */
 void LocalMapping::MapPointCulling()
 {
     // Check Recent Added MapPoints
     list<MapPoint*>::iterator lit = mlpRecentAddedMapPoints.begin();
     const unsigned long int nCurrentKFid = mpCurrentKeyFrame->mnId;
-
+	// 根据相机类型设置不同观测阈值
     int nThObs;
     if(mbMonocular)
         nThObs = 2;
@@ -357,23 +389,26 @@ void LocalMapping::MapPointCulling()
     const int cnThObs = nThObs;
 
     int borrar = mlpRecentAddedMapPoints.size();
-
+	// 遍历新添加的地图点
     while(lit!=mlpRecentAddedMapPoints.end())
     {
         MapPoint* pMP = *lit;
-
+		// 坏点 删除
         if(pMP->isBad())
             lit = mlpRecentAddedMapPoints.erase(lit);
-        else if(pMP->GetFoundRatio()<0.25f)
+	    // 跟踪到该MapPoint的Frame数相比可观测到该MapPoint的Frame数的比例小于25%
+		else if(pMP->GetFoundRatio()<0.25f)
         {
             pMP->SetBadFlag();
             lit = mlpRecentAddedMapPoints.erase(lit);
         }
+		// 从该点建立开始，到现在已经过了>=2个关键帧 且 观测到该点的关键帧数却<=cnThObs帧，那么删除该点
         else if(((int)nCurrentKFid-(int)pMP->mnFirstKFid)>=2 && pMP->Observations()<=cnThObs)
         {
             pMP->SetBadFlag();
             lit = mlpRecentAddedMapPoints.erase(lit);
         }
+        // 从该点建立开始，到现在已经过了>=3个关键帧
         else if(((int)nCurrentKFid-(int)pMP->mnFirstKFid)>=3)
             lit = mlpRecentAddedMapPoints.erase(lit);
         else
@@ -383,17 +418,19 @@ void LocalMapping::MapPointCulling()
         }
     }
 }
-
-
+/**
+ * @brief 用当前关键帧与相邻关键帧通过三角化产生新的地图点，使得跟踪更稳
+ */
 void LocalMapping::CreateNewMapPoints()
 {
     // Retrieve neighbor keyframes in covisibility graph
+	// 在共视图中检索相邻关键帧的数目
     int nn = 10;
     // For stereo inertial case
     if(mbMonocular)
         nn=30;
     vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn);
-
+	// 使用IMU
     if (mbInertial)
     {
         KeyFrame* pKF = mpCurrentKeyFrame;
@@ -408,7 +445,7 @@ void LocalMapping::CreateNewMapPoints()
     }
 
     float th = 0.6f;
-
+	// 构造特征点匹配器 阈值提高(最优距离<0.6*次优距离) 且 不检验方向
     ORBmatcher matcher(th,false);
 
     Sophus::SE3<float> sophTcw1 = mpCurrentKeyFrame->GetPose();
@@ -416,23 +453,26 @@ void LocalMapping::CreateNewMapPoints()
     Eigen::Matrix<float,3,3> Rcw1 = eigTcw1.block<3,3>(0,0);
     Eigen::Matrix<float,3,3> Rwc1 = Rcw1.transpose();
     Eigen::Vector3f tcw1 = sophTcw1.translation();
+	// 得到当前关键帧光心在世界坐标系中的坐标
     Eigen::Vector3f Ow1 = mpCurrentKeyFrame->GetCameraCenter();
-
+	// 相机内参
     const float &fx1 = mpCurrentKeyFrame->fx;
     const float &fy1 = mpCurrentKeyFrame->fy;
     const float &cx1 = mpCurrentKeyFrame->cx;
     const float &cy1 = mpCurrentKeyFrame->cy;
     const float &invfx1 = mpCurrentKeyFrame->invfx;
     const float &invfy1 = mpCurrentKeyFrame->invfy;
-
+	// 图像金字塔系数
     const float ratioFactor = 1.5f*mpCurrentKeyFrame->mfScaleFactor;
     int countStereo = 0;
     int countStereoGoodProj = 0;
     int countStereoAttempt = 0;
     int totalStereoPts = 0;
     // Search matches with epipolar restriction and triangulate
+	// 遍历相邻关键帧
     for(size_t i=0; i<vpNeighKFs.size(); i++)
     {
+	    // 下面的过程会比较耗费时间 如果有新的关键帧需要处理的话 先去处理新的关键帧
         if(i>0 && CheckNewKeyFrames())
             return;
 
@@ -441,25 +481,29 @@ void LocalMapping::CreateNewMapPoints()
         GeometricCamera* pCamera1 = mpCurrentKeyFrame->mpCamera, *pCamera2 = pKF2->mpCamera;
 
         // Check first that baseline is not too short
+	    // 判断相机运动的基线是不是足够长
         Eigen::Vector3f Ow2 = pKF2->GetCameraCenter();
         Eigen::Vector3f vBaseline = Ow2-Ow1;
         const float baseline = vBaseline.norm();
-
+		// 非单目
         if(!mbMonocular)
         {
             if(baseline<pKF2->mb)
                 continue;
         }
-        else
+        // 单目
+		else
         {
+	        // 邻接关键帧的场景深度中值
             const float medianDepthKF2 = pKF2->ComputeSceneMedianDepth(2);
+	        // baseline与景深的比例
             const float ratioBaselineDepth = baseline/medianDepthKF2;
-
+	        // 如果特别远(比例特别小)，基线太短恢复3D点不准，那么跳过当前邻接的关键帧，不生成3D点
             if(ratioBaselineDepth<0.01)
                 continue;
         }
 
-        // Search matches that fullfil epipolar constraint
+        // Search matches that fulfill epipolar constraint
         vector<pair<size_t,size_t> > vMatchedIndices;
         bool bCoarse = mbInertial && mpTracker->mState==Tracking::RECENTLY_LOST && mpCurrentKeyFrame->GetMap()->GetIniertialBA2();
 
@@ -875,7 +919,9 @@ bool LocalMapping::AcceptKeyFrames()
     unique_lock<mutex> lock(mMutexAccept);
     return mbAcceptKeyFrames;
 }
-
+/**
+ * @brief 设置"允许接受关键帧"的状态标志
+ */
 void LocalMapping::SetAcceptKeyFrames(bool flag)
 {
     unique_lock<mutex> lock(mMutexAccept);

@@ -144,7 +144,6 @@ KeyFrame* MapPoint::GetReferenceKeyFrame()
 }
 /**
  * @brief 给地图点添加观测
- *
  * 记录哪些 KeyFrame 的那个特征点能观测到该地图点
  * 并增加观测的相机数目nObs，单目+1，双目或者rgbd+2
  * 这个函数是建立关键帧共视关系的核心函数，能共同观测到某些地图点的关键帧是共视关键帧
@@ -163,7 +162,7 @@ void MapPoint::AddObservation(KeyFrame* pKF, int idx)
     else{
         indexes = tuple<int,int>(-1,-1);
     }
-	// 左目图像存在特征点 且 索引超过左目特征点数
+	// fisheye 且 索引超过左目特征点数
 	// 保存在右目图像
     if(pKF -> NLeft != -1 && idx >= pKF -> NLeft){
         get<1>(indexes) = idx;
@@ -228,7 +227,10 @@ int MapPoint::Observations()
     unique_lock<mutex> lock(mMutexFeatures);
     return nObs;
 }
-
+/**
+ * @brief 告知可以观测到该MapPoint的Frame，该MapPoint已被删除
+ *
+ */
 void MapPoint::SetBadFlag()
 {
     map<KeyFrame*, tuple<int,int>> obs;
@@ -335,7 +337,13 @@ void MapPoint::IncreaseFound(int n)
     unique_lock<mutex> lock(mMutexFeatures);
     mnFound+=n;
 }
-
+/**
+ * @brief 返回被找到/被看到
+ * mnFound：地图点被多少帧（包括普通帧）看到，次数越多越好
+ * mnVisible：地图点应该被看到的次数
+ * 对于大FOV镜头这个比例会高，对于窄FOV镜头这个比例会低
+ * @return 被找到/被看到
+ */
 float MapPoint::GetFoundRatio()
 {
     unique_lock<mutex> lock(mMutexFeatures);

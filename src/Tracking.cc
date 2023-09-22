@@ -2335,21 +2335,27 @@ void Tracking::Track()
 	        // 临时地图点仅仅是为了提高双目或rgbd摄像头的帧间跟踪效果，用完以后就扔了，没有添加到地图中
             for(list<MapPoint*>::iterator lit = mlpTemporalPoints.begin(), lend =  mlpTemporalPoints.end(); lit!=lend; lit++)
             {
+	            // 不仅清除mlpTemporalPoints，通过delete pMP还删除了指针指向的MapPoint
                 MapPoint* pMP = *lit;
                 delete pMP;
             }
+	        // 不能直接执行这个是因为其中存储的都是指针 避免内存泄露
             mlpTemporalPoints.clear();
 
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_StartNewKF = std::chrono::steady_clock::now();
 #endif
+	        // 判断是否需要插入关键帧
             bool bNeedKF = NeedNewKeyFrame();
 
             // Check if we need to insert a new keyframe
             // if(bNeedKF && bOK)
+	        // 条件1：bNeedKF=true，需要插入关键帧
+	        // 条件2：bOK=true跟踪成功 或 IMU模式下的RECENTLY_LOST模式且mInsertKFsLost为true
             if(bNeedKF && (bOK || (mInsertKFsLost && mState==RECENTLY_LOST &&
                                    (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD))))
-                CreateNewKeyFrame();
+                // 满足条件创建新的关键帧
+				CreateNewKeyFrame();
 
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndNewKF = std::chrono::steady_clock::now();
@@ -2362,6 +2368,8 @@ void Tracking::Track()
             // pass to the new keyframe, so that bundle adjustment will finally decide
             // if they are outliers or not. We don't want next frame to estimate its position
             // with those points so we discard them in the frame. Only has effect if lastframe is tracked
+			// 允许在BA中被Huber核函数判断为外点的传入新的关键帧中，让后续的BA来审判他们是不是真正的外点
+	        // 但是估计下一帧位姿的时候我们不想用这些外点，所以删掉
             for(int i=0; i<mCurrentFrame.N;i++)
             {
                 if(mCurrentFrame.mvpMapPoints[i] && mCurrentFrame.mvbOutlier[i])
@@ -3287,9 +3295,20 @@ bool Tracking::TrackLocalMap()
             return true;
     }
 }
-
+/**
+ * @brief 判断当前帧是否需要插入关键帧
+ * Step 1：纯VO模式下不插入关键帧，如果局部地图被闭环检测使用，则不插入关键帧
+ * Step 2：如果距离上一次重定位比较近，或者关键帧数目超出最大限制，不插入关键帧
+ * Step 3：得到参考关键帧跟踪到的地图点数量
+ * Step 4：查询局部地图管理器是否繁忙,也就是当前能否接受新的关键帧
+ * Step 5：对于双目或RGBD摄像头，统计可以添加的有效地图点总数 和 跟踪到的地图点数量
+ * Step 6：决策是否需要插入关键帧
+ * @return true         需要
+ * @return false        不需要
+ */
 bool Tracking::NeedNewKeyFrame()
 {
+	// IMU 且 未完成初始化
     if((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD) && !mpAtlas->GetCurrentMap()->isImuInitialized())
     {
         if (mSensor == System::IMU_MONOCULAR && (mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.25)
@@ -3299,11 +3318,12 @@ bool Tracking::NeedNewKeyFrame()
         else
             return false;
     }
-
+	// 仅定位模式 不插入关键帧
     if(mbOnlyTracking)
         return false;
 
     // If Local Mapping is freezed by a Loop Closure do not insert keyframes
+	// 回环检测占用局部建图 不插入关键帧
     if(mpLocalMapper->isStopped() || mpLocalMapper->stopRequested()) {
         /*if(mSensor == System::MONOCULAR)
         {
@@ -3315,6 +3335,7 @@ bool Tracking::NeedNewKeyFrame()
     const int nKFs = mpAtlas->KeyFramesInMap();
 
     // Do not insert keyframes if not enough frames have passed from last relocalisation
+	// 刚刚发生重定位 且 关键帧总数超过最大限制 不插入关键帧
     if(mCurrentFrame.mnId<mnLastRelocFrameId+mMaxFrames && nKFs>mMaxFrames)
     {
         return false;
@@ -3324,20 +3345,26 @@ bool Tracking::NeedNewKeyFrame()
     int nMinObs = 3;
     if(nKFs<=2)
         nMinObs=2;
+	// 统计参考关键帧中地图点观测>=nMinObs的数目
     int nRefMatches = mpReferenceKF->TrackedMapPoints(nMinObs);
 
     // Local Mapping accept keyframes?
+	// 查询局部建图线程是否繁忙 能否接受新的关键帧
     bool bLocalMappingIdle = mpLocalMapper->AcceptKeyFrames();
 
     // Check how many "close" points are being tracked and how many could be potentially created.
-    int nNonTrackedClose = 0;
-    int nTrackedClose= 0;
-
+	// 对于双目或RGBD，统计成功跟踪的近点的数量，如果跟踪到的近点太少，没有跟踪到的近点较多，可以插入关键帧
+	// 双目或RGB-D中没有跟踪到的近点
+	int nNonTrackedClose = 0;
+	// 双目或RGB-D中成功跟踪的近点(三维点)
+    int nTrackedClose = 0;
+	// 双目 或 RGBD
     if(mSensor!=System::MONOCULAR && mSensor!=System::IMU_MONOCULAR)
     {
         int N = (mCurrentFrame.Nleft == -1) ? mCurrentFrame.N : mCurrentFrame.Nleft;
         for(int i =0; i<N; i++)
         {
+	        // 深度值在有效范围内
             if(mCurrentFrame.mvDepth[i]>0 && mCurrentFrame.mvDepth[i]<mThDepth)
             {
                 if(mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvbOutlier[i])
@@ -3349,11 +3376,13 @@ bool Tracking::NeedNewKeyFrame()
         }
         //Verbose::PrintMess("[NEEDNEWKF]-> closed points: " + to_string(nTrackedClose) + "; non tracked closed points: " + to_string(nNonTrackedClose), Verbose::VERBOSITY_NORMAL);// Verbose::VERBOSITY_DEBUG);
     }
-
+	// 双目或RGBD 跟踪到的地图点中近点太少 且 没有跟踪到的三维点太多 插入关键帧
+	// 单目 为false
     bool bNeedToInsertClose;
     bNeedToInsertClose = (nTrackedClose<100) && (nNonTrackedClose>70);
 
     // Thresholds
+	// 设定比例阈值，当前帧和参考关键帧跟踪到点的比例，比例越大，越倾向于增加关键帧
     float thRefRatio = 0.75f;
     if(nKFs<2)
         thRefRatio = 0.4f;
@@ -3380,19 +3409,25 @@ bool Tracking::NeedNewKeyFrame()
     }
 
     // Condition 1a: More than "MaxFrames" have passed from last keyframe insertion
+	// 条件1a 长时间未插入关键帧
     const bool c1a = mCurrentFrame.mnId>=mnLastKeyFrameId+mMaxFrames;
     // Condition 1b: More than "MinFrames" have passed and Local Mapping is idle
+	// 条件1b 超过最小关键帧插入间隔 且 局部建图线程空闲
     const bool c1b = ((mCurrentFrame.mnId>=mnLastKeyFrameId+mMinFrames) && bLocalMappingIdle); //mpLocalMapper->KeyframesInQueue() < 2);
     //Condition 1c: tracking is weak
+	// 条件1c 双目/RGBD(无IMU) 且 (当前帧跟踪到的点比参考关键帧的0.25倍还少 或 满足bNeedToInsertClose)
     const bool c1c = mSensor!=System::MONOCULAR && mSensor!=System::IMU_MONOCULAR && mSensor!=System::IMU_STEREO && mSensor!=System::IMU_RGBD && (mnMatchesInliers<nRefMatches*0.25 || bNeedToInsertClose) ;
     // Condition 2: Few tracked points compared to reference keyframe. Lots of visual odometry compared to map matches.
+	// 条件2 (当前匹配点<参考帧匹配点 * 系数 或 bNeedToInsertClose) 且 跟踪到内点>15
     const bool c2 = (((mnMatchesInliers<nRefMatches*thRefRatio || bNeedToInsertClose)) && mnMatchesInliers>15);
 
     //std::cout << "NeedNewKF: c1a=" << c1a << "; c1b=" << c1b << "; c1c=" << c1c << "; c2=" << c2 << std::endl;
     // Temporal condition for Inertial cases
+	// 新增的条件c3 单目/双目+IMU模式下，并且IMU完成了初始化(隐藏条件)，当前帧和上一关键帧之间时间超过0.5秒，则c3=true
     bool c3 = false;
     if(mpLastKeyFrame)
     {
+
         if (mSensor==System::IMU_MONOCULAR)
         {
             if ((mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.5)
@@ -3405,33 +3440,44 @@ bool Tracking::NeedNewKeyFrame()
         }
     }
 
+	// 新增的条件c4：单目+IMU模式下，当前帧匹配内点数在15~75之间或者是RECENTLY_LOST状态，c4=true
     bool c4 = false;
     if ((((mnMatchesInliers<75) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST) && (mSensor == System::IMU_MONOCULAR)) // MODIFICATION_2, originally ((((mnMatchesInliers<75) && (mnMatchesInliers>15)) || mState==RECENTLY_LOST) && ((mSensor == System::IMU_MONOCULAR)))
         c4=true;
     else
         c4=false;
-
+	// 相比ORB-SLAM2多了c3,c4
     if(((c1a||c1b||c1c) && c2)||c3 ||c4)
     {
         // If the mapping accepts keyframes, insert keyframe.
         // Otherwise send a signal to interrupt BA
+		// 在局部建图空闲或初始化时可以插入
         if(bLocalMappingIdle || mpLocalMapper->IsInitializing())
         {
             return true;
         }
+		// 非空闲状态
         else
         {
+			// 中断BA
             mpLocalMapper->InterruptBA();
+			// 双目/RGBD
             if(mSensor!=System::MONOCULAR  && mSensor!=System::IMU_MONOCULAR)
             {
+				// 队列中没有阻塞太多关键帧 可以插入
+	            // tracking插入关键帧不是直接插入，而且先插入到mlNewKeyFrames中，
+	            // 然后localmapper再逐个pop出来插入到mspKeyFrames
                 if(mpLocalMapper->KeyframesInQueue()<3)
                     return true;
                 else
                     return false;
             }
-            else
+            // 单目
+			else
             {
                 //std::cout << "NeedNewKeyFrame: localmap is busy" << std::endl;
+				// 弹幕直接无法插入关键帧
+	            // 可能由于单目关键帧相对比较密集
                 return false;
             }
         }
@@ -3439,24 +3485,33 @@ bool Tracking::NeedNewKeyFrame()
     else
         return false;
 }
-
+/**
+ * @brief 创建新的关键帧
+ * 对于非单目的情况，同时创建新的MapPoints
+ * Step 1：将当前帧构造成关键帧
+ * Step 2：将当前关键帧设置为当前帧的参考关键帧
+ * Step 3：对于双目或rgbd摄像头，为当前帧生成新的MapPoints
+ */
 void Tracking::CreateNewKeyFrame()
 {
+	// 局部建图正在初始化 且 IMU未初始化
     if(mpLocalMapper->IsInitializing() && !mpAtlas->isImuInitialized())
         return;
 
     if(!mpLocalMapper->SetNotStop(true))
         return;
-
+	// 根据当前帧构造为关键帧
     KeyFrame* pKF = new KeyFrame(mCurrentFrame,mpAtlas->GetCurrentMap(),mpKeyFrameDB);
 
     if(mpAtlas->isImuInitialized()) //  || mpLocalMapper->IsInitializing())
         pKF->bImu = true;
 
     pKF->SetNewBias(mCurrentFrame.mImuBias);
+	// 参考关键帧为当前关键帧
     mpReferenceKF = pKF;
+	// 当前帧的参考关键帧为当前关键帧
     mCurrentFrame.mpReferenceKF = pKF;
-
+	// 更新上一关键帧和当前关键帧的关系
     if(mpLastKeyFrame)
     {
         pKF->mPrevKF = mpLastKeyFrame;
@@ -3466,11 +3521,12 @@ void Tracking::CreateNewKeyFrame()
         Verbose::PrintMess("No last KF in KF creation!!", Verbose::VERBOSITY_NORMAL);
 
     // Reset preintegration from last KF (Create new object)
+	// IMU 重置预积分
     if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
     {
         mpImuPreintegratedFromLastKF = new IMU::Preintegrated(pKF->GetImuBias(),pKF->mImuCalib);
     }
-
+	// 双目/RGBD
     if(mSensor!=System::MONOCULAR && mSensor != System::IMU_MONOCULAR) // TODO check if incluide imu_stereo
     {
         mCurrentFrame.UpdatePoseMatrices();
@@ -3558,12 +3614,13 @@ void Tracking::CreateNewKeyFrame()
         }
     }
 
-
+	// 向局部建图线程插入关键帧
     mpLocalMapper->InsertKeyFrame(pKF);
-
+	// 设定局部建图标记
     mpLocalMapper->SetNotStop(false);
-
+	// 更新上一关键帧ID为当前帧ID
     mnLastKeyFrameId = mCurrentFrame.mnId;
+	// 更新上一关键帧为当前关键帧
     mpLastKeyFrame = pKF;
 }
 /**
