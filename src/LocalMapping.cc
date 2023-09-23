@@ -503,10 +503,12 @@ void LocalMapping::CreateNewMapPoints()
                 continue;
         }
 
-        // Search matches that fulfill epipolar constraint
+        // Search matches that fulfill epipolar constraint'
+		// 搜索匹配实现对极约束
         vector<pair<size_t,size_t> > vMatchedIndices;
+	    // 当惯性模式下 且 经过三次初始化 且 刚丢失状态
         bool bCoarse = mbInertial && mpTracker->mState==Tracking::RECENTLY_LOST && mpCurrentKeyFrame->GetMap()->GetIniertialBA2();
-
+		// 当前关键帧和相邻关键帧进行匹配
         matcher.SearchForTriangulation(mpCurrentKeyFrame,pKF2,vMatchedIndices,false,bCoarse);
 
         Sophus::SE3<float> sophTcw2 = pKF2->GetPose();

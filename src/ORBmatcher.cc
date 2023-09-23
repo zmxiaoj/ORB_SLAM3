@@ -964,7 +964,15 @@ namespace ORB_SLAM3
 
         return nmatches;
     }
-
+	/**
+	 * @brief 搜索用于三角化的特征点
+	 * @param pKF1 当前关键帧
+	 * @param pKF2 当前关键帧的相邻关键帧
+	 * @param vMatchedPairs
+	 * @param bOnlyStereo
+	 * @param bCoarse
+	 * @return
+	 */
     int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2,
                                            vector<pair<size_t, size_t> > &vMatchedPairs, const bool bOnlyStereo, const bool bCoarse)
     {
@@ -977,7 +985,7 @@ namespace ORB_SLAM3
         Sophus::SE3f Tw2 = pKF2->GetPoseInverse(); // for convenience
         Eigen::Vector3f Cw = pKF1->GetCameraCenter();
         Eigen::Vector3f C2 = T2w * Cw;
-
+	    // 当前关键帧光心在相邻关键帧像素坐标系下像素坐标(极点)
         Eigen::Vector2f ep = pKF2->mpCamera->project(C2);
         Sophus::SE3f T12;
         Sophus::SE3f Tll, Tlr, Trl, Trr;
@@ -985,12 +993,13 @@ namespace ORB_SLAM3
         Eigen::Vector3f t12; // for fastest computation
 
         GeometricCamera* pCamera1 = pKF1->mpCamera, *pCamera2 = pKF2->mpCamera;
-
+		// 针孔相机模型
         if(!pKF1->mpCamera2 && !pKF2->mpCamera2){
             T12 = T1w * Tw2;
             R12 = T12.rotationMatrix();
             t12 = T12.translation();
         }
+		// KB8模型
         else{
             Sophus::SE3f Tr1w = pKF1->GetRightPose();
             Sophus::SE3f Twr2 = pKF2->GetRightPoseInverse();
@@ -1006,6 +1015,7 @@ namespace ORB_SLAM3
         // Find matches between not tracked keypoints
         // Matching speed-up by ORB Vocabulary
         // Compare only ORB that share the same node
+		// 特征点匹配 使用词袋加速 仅比较有相同节点的
         int nmatches=0;
         vector<bool> vbMatched2(pKF2->N,false);
         vector<int> vMatches12(pKF1->N,-1);
@@ -1020,15 +1030,17 @@ namespace ORB_SLAM3
         DBoW2::FeatureVector::const_iterator f2it = vFeatVec2.begin();
         DBoW2::FeatureVector::const_iterator f1end = vFeatVec1.end();
         DBoW2::FeatureVector::const_iterator f2end = vFeatVec2.end();
-
+	    // 遍历pKF1和pKF2中的node节点
         while(f1it!=f1end && f2it!=f2end)
         {
+	        // 如果f1it和f2it属于同一个node节点才会进行匹配 BoW加速匹配原理
             if(f1it->first == f2it->first)
             {
+				// 遍历同属于一个node pKF1的特征点
                 for(size_t i1=0, iend1=f1it->second.size(); i1<iend1; i1++)
                 {
                     const size_t idx1 = f1it->second[i1];
-
+					// 取出特征点索引对应的地图点
                     MapPoint* pMP1 = pKF1->GetMapPoint(idx1);
 
                     // If there is already a MapPoint skip
@@ -1036,32 +1048,33 @@ namespace ORB_SLAM3
                     {
                         continue;
                     }
-
+					// 双目
                     const bool bStereo1 = (!pKF1->mpCamera2 && pKF1->mvuRight[idx1]>=0);
 
                     if(bOnlyStereo)
                         if(!bStereo1)
                             continue;
-
+	                // 通过特征点索引idx1在pKF1中取出对应的特征点
                     const cv::KeyPoint &kp1 = (pKF1 -> NLeft == -1) ? pKF1->mvKeysUn[idx1]
                                                                     : (idx1 < pKF1 -> NLeft) ? pKF1 -> mvKeys[idx1]
                                                                                              : pKF1 -> mvKeysRight[idx1 - pKF1 -> NLeft];
 
                     const bool bRight1 = (pKF1 -> NLeft == -1 || idx1 < pKF1 -> NLeft) ? false
                                                                                        : true;
-
+					// 去出特征点对应描述子
                     const cv::Mat &d1 = pKF1->mDescriptors.row(idx1);
 
                     int bestDist = TH_LOW;
                     int bestIdx2 = -1;
-
+	                // 遍历同属于一个node pKF2的特征点
                     for(size_t i2=0, iend2=f2it->second.size(); i2<iend2; i2++)
                     {
                         size_t idx2 = f2it->second[i2];
-
+						// 获取索引对应的地图点
                         MapPoint* pMP2 = pKF2->GetMapPoint(idx2);
 
                         // If we have already matched or there is a MapPoint skip
+	                    // 如果pKF2当前特征点索引idx2已经被匹配过 或 对应的地图点非空 跳过
                         if(vbMatched2[idx2] || pMP2)
                             continue;
 
@@ -1072,9 +1085,9 @@ namespace ORB_SLAM3
                                 continue;
 
                         const cv::Mat &d2 = pKF2->mDescriptors.row(idx2);
-
+						// 计算描述子距离
                         const int dist = DescriptorDistance(d1,d2);
-
+						// 找到最优距离
                         if(dist>TH_LOW || dist>bestDist)
                             continue;
 
@@ -1083,9 +1096,10 @@ namespace ORB_SLAM3
                                                                                                  : pKF2 -> mvKeysRight[idx2 - pKF2 -> NLeft];
                         const bool bRight2 = (pKF2 -> NLeft == -1 || idx2 < pKF2 -> NLeft) ? false
                                                                                            : true;
-
+						// 双目不需要判断像素点到极点的距离 因为双目模式下可以左右互匹配恢复三维点
                         if(!bStereo1 && !bStereo2 && !pKF1->mpCamera2)
                         {
+							// 比较KP1光心在KP2像素坐标系下像素坐标(极点) 与 特征点 距离
                             const float distex = ep(0)-kp2.pt.x;
                             const float distey = ep(1)-kp2.pt.y;
                             if(distex*distex+distey*distey<100*pKF2->mvScaleFactors[kp2.octave])
@@ -1093,7 +1107,7 @@ namespace ORB_SLAM3
                                 continue;
                             }
                         }
-
+						// KB8
                         if(pKF1->mpCamera2 && pKF2->mpCamera2){
                             if(bRight1 && bRight2){
                                 R12 = Rrr;
@@ -1129,22 +1143,25 @@ namespace ORB_SLAM3
                             }
 
                         }
-
+	                    // 计算特征点kp2到kp1对应极线的距离是否小于阈值
                         if(bCoarse || pCamera1->epipolarConstrain(pCamera2,kp1,kp2,R12,t12,pKF1->mvLevelSigma2[kp1.octave],pKF2->mvLevelSigma2[kp2.octave])) // MODIFICATION_2
                         {
                             bestIdx2 = idx2;
                             bestDist = dist;
                         }
                     }
-
+					// 找到匹配
                     if(bestIdx2>=0)
                     {
                         const cv::KeyPoint &kp2 = (pKF2 -> NLeft == -1) ? pKF2->mvKeysUn[bestIdx2]
                                                                         : (bestIdx2 < pKF2 -> NLeft) ? pKF2 -> mvKeys[bestIdx2]
                                                                                                      : pKF2 -> mvKeysRight[bestIdx2 - pKF2 -> NLeft];
-                        vMatches12[idx1]=bestIdx2;
+                        // 记录匹配结果
+						vMatches12[idx1]=bestIdx2;
+	                    // !记录已经匹配，避免重复匹配。原作者漏掉！可以添加下面代码
+	                    vbMatched2[bestIdx2]=true;
                         nmatches++;
-
+						// 检验方向
                         if(mbCheckOrientation)
                         {
                             float rot = kp1.angle-kp2.angle;
@@ -1162,6 +1179,7 @@ namespace ORB_SLAM3
                 f1it++;
                 f2it++;
             }
+			// 对齐两个FeatureVector
             else if(f1it->first < f2it->first)
             {
                 f1it = vFeatVec1.lower_bound(f2it->first);
@@ -1171,7 +1189,7 @@ namespace ORB_SLAM3
                 f2it = vFeatVec2.lower_bound(f1it->first);
             }
         }
-
+	    // 用旋转差直方图来筛掉错误匹配对(三角化未使用)
         if(mbCheckOrientation)
         {
             int ind1=-1;
@@ -1192,7 +1210,7 @@ namespace ORB_SLAM3
             }
 
         }
-
+		// 保存匹配关系
         vMatchedPairs.clear();
         vMatchedPairs.reserve(nmatches);
 
