@@ -262,13 +262,21 @@ MapPoint* MapPoint::GetReplaced()
     unique_lock<mutex> lock2(mMutexPos);
     return mpReplaced;
 }
-
+/**
+ * @brief 替换地图点，更新观测关系
+ * 要替换当前地图点,有两个工作:
+ * 1. 将当前地图点的观测数据等其他数据都"叠加"到新的地图点上
+ * 2. 将观测到当前地图点的关键帧的信息进行更新
+ * @param[in] pMP   用该地图点来替换当前地图点
+ */
 void MapPoint::Replace(MapPoint* pMP)
 {
+	// 同一个地图点则跳过
     if(pMP->mnId==this->mnId)
         return;
 
     int nvisible, nfound;
+	// 清除当前地图点的信息，这一段和SetBadFlag函数相同
     map<KeyFrame*,tuple<int,int>> obs;
     {
         unique_lock<mutex> lock1(mMutexFeatures);
@@ -280,7 +288,7 @@ void MapPoint::Replace(MapPoint* pMP)
         nfound = mnFound;
         mpReplaced = pMP;
     }
-
+	// 遍历能原地图点的关键帧 复制到替换的地图点上
     for(map<KeyFrame*,tuple<int,int>>::iterator mit=obs.begin(), mend=obs.end(); mit!=mend; mit++)
     {
         // Replace measurement in keyframe
@@ -288,11 +296,13 @@ void MapPoint::Replace(MapPoint* pMP)
 
         tuple<int,int> indexes = mit -> second;
         int leftIndex = get<0>(indexes), rightIndex = get<1>(indexes);
-
+		// 替换地图点不在关键帧中
         if(!pMP->IsInKeyFrame(pKF))
         {
             if(leftIndex != -1){
+				// 增加关键帧对地图点的观测
                 pKF->ReplaceMapPointMatch(leftIndex, pMP);
+				// 增加地图点被关键帧的观测
                 pMP->AddObservation(pKF,leftIndex);
             }
             if(rightIndex != -1){
@@ -300,6 +310,7 @@ void MapPoint::Replace(MapPoint* pMP)
                 pMP->AddObservation(pKF,rightIndex);
             }
         }
+        // 如果新的MP在之前MP对应的关键帧里面 本来目的想新旧MP融为一个，这样以来一个点有可能对应两个特征点，这样是决不允许的，所以删除旧的，不动新的
         else
         {
             if(leftIndex != -1){
@@ -313,7 +324,7 @@ void MapPoint::Replace(MapPoint* pMP)
     pMP->IncreaseFound(nfound);
     pMP->IncreaseVisible(nvisible);
     pMP->ComputeDistinctiveDescriptors();
-
+	// 删除当前地图点
     mpMap->EraseMapPoint(this);
 }
 

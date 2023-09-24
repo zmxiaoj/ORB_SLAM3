@@ -43,7 +43,15 @@ Eigen::Matrix3f GeometricTools::ComputeF12(KeyFrame* &pKF1, KeyFrame* &pKF2)
 
     return K1.transpose().inverse() * tc1c2x * Rc1c2 * K2.inverse();
 }
-
+/**
+ * @brief 2D-2D匹配进行三角化
+ * @param[in]  x_c1 特征点1在归一化相机坐标系下反投影
+ * @param[in]  x_c2 特征点2在归一化相机坐标系下反投影
+ * @param[in]  Tc1w 第1帧在世界坐标系下位姿
+ * @param[in]  Tc2w 第2帧在世界坐标系下位姿
+ * @param[out] x3D  生成的3D地图点
+ * @return
+ */
 bool GeometricTools::Triangulate(Eigen::Vector3f &x_c1, Eigen::Vector3f &x_c2,Eigen::Matrix<float,3,4> &Tc1w ,Eigen::Matrix<float,3,4> &Tc2w , Eigen::Vector3f &x3D)
 {
     Eigen::Matrix4f A;
@@ -60,6 +68,7 @@ bool GeometricTools::Triangulate(Eigen::Vector3f &x_c1, Eigen::Vector3f &x_c2,Ei
         return false;
 
     // Euclidean coordinates
+	// 取出齐次坐标的前3维
     x3D = x3Dh.head(3)/x3Dh(3);
 
     return true;

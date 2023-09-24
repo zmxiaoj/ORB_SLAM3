@@ -348,7 +348,7 @@ void KeyFrame::EraseMapPointMatch(MapPoint* pMP)
         mvpMapPoints[rightIndex]=static_cast<MapPoint*>(NULL);
 }
 
-
+// 地图点的替换
 void KeyFrame::ReplaceMapPointMatch(const int &idx, MapPoint* pMP)
 {
     mvpMapPoints[idx]=pMP;
@@ -765,7 +765,14 @@ void KeyFrame::EraseConnection(KeyFrame* pKF)
     if(bUpdate)
         UpdateBestCovisibles();
 }
-
+/**
+ * @brief 同Frame::GetFeaturesInArea
+ * @param x
+ * @param y
+ * @param r
+ * @param bRight
+ * @return
+ */
 
 vector<size_t> KeyFrame::GetFeaturesInArea(const float &x, const float &y, const float &r, const bool bRight) const
 {

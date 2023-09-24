@@ -1223,7 +1223,14 @@ namespace ORB_SLAM3
 
         return nmatches;
     }
-
+	/**
+	 * @brief 在局部建图线程 将当前关键帧地图点和一级二级共视关键帧地图点进行融合
+	 * @param pKF 一级二级共视关键帧
+	 * @param vpMapPoints 当前关键帧地图点
+	 * @param th
+	 * @param bRight (default = false) 存在右目
+	 * @return
+	 */
     int ORBmatcher::Fuse(KeyFrame *pKF, const vector<MapPoint *> &vpMapPoints, const float th, const bool bRight)
     {
         GeometricCamera* pCamera;
@@ -1253,7 +1260,8 @@ namespace ORB_SLAM3
 
         // For debbuging
         int count_notMP = 0, count_bad=0, count_isinKF = 0, count_negdepth = 0, count_notinim = 0, count_dist = 0, count_normal=0, count_notidx = 0, count_thcheck = 0;
-        for(int i=0; i<nMPs; i++)
+        // 遍历当前关键帧地图点
+		for(int i=0; i<nMPs; i++)
         {
             MapPoint* pMP = vpMapPoints[i];
 
@@ -1268,16 +1276,18 @@ namespace ORB_SLAM3
                 count_bad++;
                 continue;
             }
+			// 地图点被关键帧观测 跳过
             else if(pMP->IsInKeyFrame(pKF))
             {
                 count_isinKF++;
                 continue;
             }
-
+			// 地图点世界系下坐标到相机坐标系
             Eigen::Vector3f p3Dw = pMP->GetWorldPos();
             Eigen::Vector3f p3Dc = Tcw * p3Dw;
 
             // Depth must be positive
+			// 深度为负 跳过
             if(p3Dc(2)<0.0f)
             {
                 count_negdepth++;
@@ -1285,16 +1295,17 @@ namespace ORB_SLAM3
             }
 
             const float invz = 1/p3Dc(2);
-
+			// 投影到关键帧像素坐标系
             const Eigen::Vector2f uv = pCamera->project(p3Dc);
 
             // Point must be inside the image
+			// 像素点在图像合法范围内
             if(!pKF->IsInImage(uv(0),uv(1)))
             {
                 count_notinim++;
                 continue;
             }
-
+			// 双目
             const float ur = uv(0)-bf*invz;
 
             const float maxDistance = pMP->GetMaxDistanceInvariance();
@@ -1303,12 +1314,14 @@ namespace ORB_SLAM3
             const float dist3D = PO.norm();
 
             // Depth must be inside the scale pyramid of the image
+	        // 地图点到关键帧相机光心距离需满足在有效范围内
             if(dist3D<minDistance || dist3D>maxDistance) {
                 count_dist++;
                 continue;
             }
 
             // Viewing angle must be less than 60 deg
+	        // 地图点的平均观测方向（正视程度）要小于60°
             Eigen::Vector3f Pn = pMP->GetNormal();
 
             if(PO.dot(Pn)<0.5*dist3D)
@@ -1320,8 +1333,9 @@ namespace ORB_SLAM3
             int nPredictedLevel = pMP->PredictScale(dist3D,pKF);
 
             // Search in a radius
+	        // 根据MapPoint的深度确定尺度，从而确定搜索范围
             const float radius = th*pKF->mvScaleFactors[nPredictedLevel];
-
+	        // 在投影点附近搜索窗口内找到候选匹配点的索引
             const vector<size_t> vIndices = pKF->GetFeaturesInArea(uv(0),uv(1),radius,bRight);
 
             if(vIndices.empty())
@@ -1331,11 +1345,12 @@ namespace ORB_SLAM3
             }
 
             // Match to the most similar keypoint in the radius
-
+			// 与描述子距离最近特征点匹配
             const cv::Mat dMP = pMP->GetDescriptor();
 
             int bestDist = 256;
             int bestIdx = -1;
+			// 遍历候选匹配点 找到最小距离
             for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
             {
                 size_t idx = *vit;
@@ -1347,7 +1362,7 @@ namespace ORB_SLAM3
 
                 if(kpLevel<nPredictedLevel-1 || kpLevel>nPredictedLevel)
                     continue;
-
+				// 双目
                 if(pKF->mvuRight[idx]>=0)
                 {
                     // Check reprojection error in stereo
@@ -1362,6 +1377,7 @@ namespace ORB_SLAM3
                     if(e2*pKF->mvInvLevelSigma2[kpLevel]>7.8)
                         continue;
                 }
+				// 单目
                 else
                 {
                     const float &kpx = kp.pt.x;
@@ -1369,7 +1385,7 @@ namespace ORB_SLAM3
                     const float ex = uv(0)-kpx;
                     const float ey = uv(1)-kpy;
                     const float e2 = ex*ex+ey*ey;
-
+	                // 假设测量有一个像素的偏差 自由度为2的，卡方检验阈值5.99
                     if(e2*pKF->mvInvLevelSigma2[kpLevel]>5.99)
                         continue;
                 }
@@ -1388,19 +1404,23 @@ namespace ORB_SLAM3
             }
 
             // If there is already a MapPoint replace otherwise add new measurement
+			// 最优距离小于阈值
             if(bestDist<=TH_LOW)
             {
                 MapPoint* pMPinKF = pKF->GetMapPoint(bestIdx);
+				// 最佳匹配特征点有对应地图点
                 if(pMPinKF)
                 {
                     if(!pMPinKF->isBad())
                     {
+						// 选择被观测次数最多的那个替换
                         if(pMPinKF->Observations()>pMP->Observations())
                             pMP->Replace(pMPinKF);
                         else
                             pMPinKF->Replace(pMP);
                     }
                 }
+                // 如果最佳匹配点没有对应地图点，添加观测信息
                 else
                 {
                     pMP->AddObservation(pKF,bestIdx);
