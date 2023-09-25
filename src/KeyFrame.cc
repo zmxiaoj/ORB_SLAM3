@@ -251,7 +251,10 @@ void KeyFrame::UpdateBestCovisibles()
     mvpOrderedConnectedKeyFrames = vector<KeyFrame*>(lKFs.begin(),lKFs.end());
     mvOrderedWeights = vector<int>(lWs.begin(), lWs.end());
 }
-
+/**
+ * @brief 得到与当前关键帧相连的关键帧
+ * @return
+ */
 set<KeyFrame*> KeyFrame::GetConnectedKeyFrames()
 {
     unique_lock<mutex> lock(mMutexConnections);
@@ -260,7 +263,10 @@ set<KeyFrame*> KeyFrame::GetConnectedKeyFrames()
         s.insert(mit->first);
     return s;
 }
-
+/**
+ * @brief 得到与该关键帧连接的关键帧(已按权值排序)
+ * @return
+ */
 vector<KeyFrame*> KeyFrame::GetVectorCovisibleKeyFrames()
 {
     unique_lock<mutex> lock(mMutexConnections);

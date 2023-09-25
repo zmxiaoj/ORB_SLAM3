@@ -231,7 +231,7 @@ namespace ORB_SLAM3
             return 4.0;
     }
     /**
-     * @brief 通过词袋对关键帧和普通帧的特征点进行跟踪
+     * @brief 通过词袋对关键帧和普通帧的特征点进行匹配
      * @param pKF 关键帧
      * @param F 当前普通帧
      * @param vpMapPointMatches F中地图点对应的匹配，NULL表示未匹配
@@ -822,7 +822,16 @@ namespace ORB_SLAM3
 
         return nmatches;
     }
-
+	/**
+	 * @brief 通过词袋对关键帧1和关键帧2的特征点进行匹配
+     * @details 通过bow对pKF和F中的特征点进行快速匹配(不属于同一node的特征点直接跳过匹配)
+     * 对属于同一node的特征点通过描述子距离进行匹配
+     * 通过距离阈值、比例阈值和角度投票进行剔除误匹配
+	 * @param pKF1 关键帧1
+	 * @param pKF2 关键帧2
+	 * @param vpMatches12 pKF2中与pKF1匹配的MapPoint，vpMatches12[i]表示匹配的地图点，null表示没有匹配，i表示匹配的pKF1 特征点索引
+	 * @return 成功匹配数目
+	 */
     int ORBmatcher::SearchByBoW(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &vpMatches12)
     {
         const vector<cv::KeyPoint> &vKeysUn1 = pKF1->mvKeysUn;

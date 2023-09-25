@@ -1181,12 +1181,15 @@ void LocalMapping::RequestResetActiveMap(Map* pMap)
     }
     cout << "LM: Active map reset, Done!!!" << endl;
 }
-
+/**
+ * @brief 检查是否有复位线程的请求
+ */
 void LocalMapping::ResetIfRequested()
 {
     bool executed_reset = false;
     {
         unique_lock<mutex> lock(mMutexReset);
+	    // 执行复位操作:清空关键帧缓冲区,清空待cull的地图点缓冲
         if(mbResetRequested)
         {
             executed_reset = true;

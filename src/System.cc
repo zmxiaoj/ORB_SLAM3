@@ -230,6 +230,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 	mptLoopClosing = new thread(&ORB_SLAM3::LoopClosing::Run, mpLoopCloser);
 
     //Set pointers between threads
+	// 设置3个主要线程间的指针
     mpTracker->SetLocalMapper(mpLocalMapper);
     mpTracker->SetLoopClosing(mpLoopCloser);
 
