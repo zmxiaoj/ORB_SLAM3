@@ -398,32 +398,41 @@ bool LoopClosing::NewDetectCommonRegions()
     {
         bCheckSpatial = true;
         // Find from the last KF candidates
+	    // 通过上一关键帧,计算新的当前帧的sim3
+		// Tcl = Tcw*Twl
         Sophus::SE3d mTcl = (mpCurrentKF->GetPose() * mpLoopLastCurrentKF->GetPoseInverse()).cast<double>();
-        g2o::Sim3 gScl(mTcl.unit_quaternion(),mTcl.translation(),1.0);
+        g2o::Sim3 gScl(mTcl.unit_quaternion(), mTcl.translation(), 1.0);
         g2o::Sim3 gScw = gScl * mg2oLoopSlw;
         int numProjMatches = 0;
         vector<MapPoint*> vpMatchedMPs;
+	    // 通过把候选帧局部窗口内的地图点向新进来的关键帧投影来验证回环检测结果,并优化Sim3位姿
         bool bCommonRegion = DetectAndReffineSim3FromLastKF(mpCurrentKF, mpLoopMatchedKF, gScw, numProjMatches, mvpLoopMPs, vpMatchedMPs);
-        if(bCommonRegion)
+	    // 如果找到共同区域(时序验证成功一次)
+		if(bCommonRegion)
         {
-
+	        // 标记时序检验成功一次
             bLoopDetectedInKF = true;
-
+	        // 累计正检验的成功次数
             mnLoopNumCoincidences++;
+	        // 不再参与新的回环检测
             mpLoopLastCurrentKF->SetErase();
+			// 更新上一回环关键帧为当前关键帧
             mpLoopLastCurrentKF = mpCurrentKF;
+			// 记录优化结果
             mg2oLoopSlw = gScw;
             mvpLoopMatchedMPs = vpMatchedMPs;
 
-
+			// 几何验证数满足 成功回环
             mbLoopDetected = mnLoopNumCoincidences >= 3;
             mnLoopNumNotFound = 0;
-
-            if(!mbLoopDetected)
+			// 设置条件与输出内容相反
+	        // if(!mbLoopDetected)
+	        if(mbLoopDetected)
             {
                 cout << "PR: Loop detected with Reffine Sim3" << endl;
             }
         }
+		// 如果没找到共同区域(时序验证失败一次)
         else
         {
             bLoopDetectedInKF = false;
@@ -569,41 +578,58 @@ bool LoopClosing::NewDetectCommonRegions()
 
     return false;
 }
-
+/**
+ * @brief 对新进来的关键帧进行时序几何验证,同时继续优化之前估计的 Tcw
+ *
+ * @param[in] pCurrentKF 当前关键帧
+ * @param[in] pMatchedKF 候选帧
+ * @param[out] gScw 世界坐标系到验证帧下的Sim3
+ * @param[out] nNumProjMatches 记录匹配点的数量
+ * @param[out] vpMPs 候选帧窗口内所有的地图点
+ * @param[out] vpMatchedMPs 候选帧窗口内所有被匹配到的点
+ * @return true 时序几何验证成功
+ * @return false 时序几何验证失败
+ */
 bool LoopClosing::DetectAndReffineSim3FromLastKF(KeyFrame* pCurrentKF, KeyFrame* pMatchedKF, g2o::Sim3 &gScw, int &nNumProjMatches,
                                                  std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs)
 {
     set<MapPoint*> spAlreadyMatchedMPs;
+	// 把候选帧局部窗口内的地图点投向新的当前关键帧,看是否有足够的匹配点
     nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs);
 
     int nProjMatches = 30;
     int nProjOptMatches = 50;
     int nProjMatchesRep = 100;
-
+	// 投影匹配点数超过阈值
     if(nNumProjMatches >= nProjMatches)
     {
         //Verbose::PrintMess("Sim3 reffine: There are " + to_string(nNumProjMatches) + " initial matches ", Verbose::VERBOSITY_DEBUG);
-        Sophus::SE3d mTwm = pMatchedKF->GetPoseInverse().cast<double>();
+        // 计算候选帧到当前帧的sim3
+		Sophus::SE3d mTwm = pMatchedKF->GetPoseInverse().cast<double>();
         g2o::Sim3 gSwm(mTwm.unit_quaternion(),mTwm.translation(),1.0);
         g2o::Sim3 gScm = gScw * gSwm;
         Eigen::Matrix<double, 7, 7> mHessian7x7;
 
+		// 单目情况不固定尺度
         bool bFixedScale = mbFixScale;       // TODO CHECK; Solo para el monocular inertial
         if(mpTracker->mSensor==System::IMU_MONOCULAR && !pCurrentKF->GetMap()->GetIniertialBA2())
             bFixedScale=false;
+		// 优化gScm
         int numOptMatches = Optimizer::OptimizeSim3(mpCurrentKF, pMatchedKF, vpMatchedMPs, gScm, 10, bFixedScale, mHessian7x7, true);
 
         //Verbose::PrintMess("Sim3 reffine: There are " + to_string(numOptMatches) + " matches after of the optimization ", Verbose::VERBOSITY_DEBUG);
-
+	    // 若匹配的数量大于阈值
         if(numOptMatches > nProjOptMatches)
         {
+			//？不使用优化后的结果 todo check
             g2o::Sim3 gScw_estimation(gScw.rotation(), gScw.translation(),1.0);
 
             vector<MapPoint*> vpMatchedMP;
             vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
-
+			// 再次通过优化后的sim3搜索匹配点
             nNumProjMatches = FindMatchesByProjection(pCurrentKF, pMatchedKF, gScw_estimation, spAlreadyMatchedMPs, vpMPs, vpMatchedMPs);
-            if(nNumProjMatches >= nProjMatchesRep)
+            // 超过阈值 优化成功
+			if(nNumProjMatches >= nProjMatchesRep)
             {
                 gScw = gScw_estimation;
                 return true;
@@ -766,7 +792,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
         }
 
         //pMostBoWMatchesKF = vpCovKFi[pMostBoWMatchesKF];
-		// bow匹配点>=阈值
+		// bow匹配点数>=阈值
         if(numBoWMatches >= nBoWMatches) // TODO pick a good threshold
         {
             // Geometric validation
@@ -785,7 +811,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
             int nInliers;
             bool bConverge = false;
             Eigen::Matrix4f mTcm;
-			// 遍历直到收敛
+			// 迭代直到收敛
             while(!bConverge && !bNoMore)
             {
                 mTcm = solver.iterate(20,bNoMore, vbInliers, nInliers, bConverge);
@@ -799,22 +825,30 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                 //Verbose::PrintMess("BoW guess: Convergende with " + to_string(nInliers) + " geometrical inliers among " + to_string(nBoWInliers) + " BoW matches", Verbose::VERBOSITY_DEBUG);
                 // Match by reprojection
                 vpCovKFi.clear();
+				// 取出窗口内最佳匹配关键帧的n个最佳共视关键帧和本身组成窗口
                 vpCovKFi = pMostBoWMatchesKF->GetBestCovisibilityKeyFrames(nNumCovisibles);
                 vpCovKFi.push_back(pMostBoWMatchesKF);
                 set<KeyFrame*> spCheckKFs(vpCovKFi.begin(), vpCovKFi.end());
 
                 //std::cout << "There are " << vpCovKFi.size() <<" near KFs" << std::endl;
-
+	            // 辅助容器,避免重复添加地图点
                 set<MapPoint*> spMapPoints;
+	            // 这两个容器是searchByProjection定义的容器
+	            // 记录窗口内地图点
                 vector<MapPoint*> vpMapPoints;
+	            // 记录每个地图点对应的窗口内的关键帧
                 vector<KeyFrame*> vpKeyFrames;
+	            // vpMapPoints  {mp1, mp2, mp3, mp4}
+	            // vpKeyFrames  {kf1, kf1, kf2, kf3}
+				// 遍历窗口内关键帧
                 for(KeyFrame* pCovKFi : vpCovKFi)
                 {
+					// 遍历关键帧对应的地图点
                     for(MapPoint* pCovMPij : pCovKFi->GetMapPointMatches())
                     {
                         if(!pCovMPij || pCovMPij->isBad())
                             continue;
-
+						// 避免重复添加
                         if(spMapPoints.find(pCovMPij) == spMapPoints.end())
                         {
                             spMapPoints.insert(pCovMPij);
@@ -825,30 +859,34 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                 }
 
                 //std::cout << "There are " << vpKeyFrames.size() <<" KFs which view all the mappoints" << std::endl;
-
+	            // solver估计的Scm初始值 为后续的非线性优化做准备 c表示当前关键帧 m表示回环/融合候选帧
                 g2o::Sim3 gScm(solver.GetEstimatedRotation().cast<double>(),solver.GetEstimatedTranslation().cast<double>(), (double) solver.GetEstimatedScale());
-                g2o::Sim3 gSmw(pMostBoWMatchesKF->GetRotation().cast<double>(),pMostBoWMatchesKF->GetTranslation().cast<double>(),1.0);
-                g2o::Sim3 gScw = gScm*gSmw; // Similarity matrix of current from the world position
+	            // 候选关键帧在其世界坐标系下的坐标
+				g2o::Sim3 gSmw(pMostBoWMatchesKF->GetRotation().cast<double>(),pMostBoWMatchesKF->GetTranslation().cast<double>(),1.0);
+                // 初始的Scm估计 世界坐标系到当前帧的位姿变换
+				g2o::Sim3 gScw = gScm*gSmw; // Similarity matrix of current from the world position
                 Sophus::Sim3f mScw = Converter::toSophus(gScw);
-
+				// 记录SearchByProjection的结果
                 vector<MapPoint*> vpMatchedMP;
                 vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
                 vector<KeyFrame*> vpMatchedKF;
                 vpMatchedKF.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<KeyFrame*>(NULL));
+				// 使用SearchByProjection得到更多匹配点
                 int numProjMatches = matcher.SearchByProjection(mpCurrentKF, mScw, vpMapPoints, vpKeyFrames, vpMatchedMP, vpMatchedKF, 8, 1.5);
                 //cout <<"BoW: " << numProjMatches << " matches between " << vpMapPoints.size() << " points with coarse Sim3" << endl;
-
+				// 取得足够匹配点
                 if(numProjMatches >= nProjMatches)
                 {
                     // Optimize Sim3 transformation with every matches
                     Eigen::Matrix<double, 7, 7> mHessian7x7;
 
                     bool bFixedScale = mbFixScale;
+	                // 在imu模式下imu未完成第3阶段初始化就不固定scale
                     if(mpTracker->mSensor==System::IMU_MONOCULAR && !mpCurrentKF->GetMap()->GetIniertialBA2())
                         bFixedScale=false;
 
                     int numOptMatches = Optimizer::OptimizeSim3(mpCurrentKF, pKFi, vpMatchedMP, gScm, 10, mbFixScale, mHessian7x7, true);
-
+					// 如果内点足够多,用更小的半径搜索匹配点,并且再次进行优化(p.s.这里与论文不符,并没有再次优化)
                     if(numOptMatches >= nSim3Inliers)
                     {
                         g2o::Sim3 gSmw(pMostBoWMatchesKF->GetRotation().cast<double>(),pMostBoWMatchesKF->GetTranslation().cast<double>(),1.0);
@@ -894,14 +932,17 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                                     }
                                 }
                             }
-
+	                        // 用当前关键帧的相邻关键帧来验证前面得到的Tam(共视几何校验)
+	                        // 统计验证成功的关键帧数量
                             int nNumKFs = 0;
                             //vpMatchedMPs = vpMatchedMP;
                             //vpMPs = vpMapPoints;
                             // Check the Sim3 transformation with the current KeyFrame covisibles
+	                        // 验证组：用来验证的关键帧组 当前关键帧的共视关键帧，nNumCovisibles = 5;
                             vector<KeyFrame*> vpCurrentCovKFs = mpCurrentKF->GetBestCovisibilityKeyFrames(nNumCovisibles);
 
                             int j = 0;
+	                        // 遍历验证组 有三个关键帧验证成功或遍历所有的关键帧后结束循环
                             while(nNumKFs < 3 && j<vpCurrentCovKFs.size())
                             {
                                 KeyFrame* pKFj = vpCurrentCovKFs[j];
@@ -910,6 +951,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                                 g2o::Sim3 gSjw = gSjc * gScw;
                                 int numProjMatches_j = 0;
                                 vector<MapPoint*> vpMatchedMPs_j;
+	                            // 几何校验函数 函数内部是个searchByProjection : 通过之前计算的位姿转换地图点并通过投影搜索匹配点, 若大于一定数目的任务成功验证一次
                                 bool bValid = DetectCommonRegionsFromLastKF(pKFj,pMostBoWMatchesKF, gSjw,numProjMatches_j, vpMapPoints, vpMatchedMPs_j);
 
                                 if(bValid)
@@ -922,13 +964,13 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                                 }
                                 j++;
                             }
-
+	                        // 没有用的代码,记录信息,方便打印检查
                             if(nNumKFs < 3)
                             {
                                 vnStage[index] = 8;
                                 vnMatchesStage[index] = nNumKFs;
                             }
-
+	                        // 记录第二次searchByProjection得到最多匹配点的关键帧的各种信息,最后作为回环帧/融合帧
                             if(nBestMatchesReproj < numProjOptMatches)
                             {
                                 nBestMatchesReproj = numProjOptMatches;
@@ -978,7 +1020,18 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
 	// 如果少于3个当前关键帧的共视关键帧验证了这个候选帧,那么返回失败,注意,这里的失败并不代表最终的验证失败,后续会开启时序校验
     return false;
 }
-
+/**
+ * @brief 用来验证候选帧的函数 想利用候选帧的共视关键帧来验证候选帧,不如改叫做：DetectCommonRegionsFromCoVKF
+ *
+ * @param[in] pCurrentKF 当前关键帧
+ * @param[in] pMatchedKF 候选帧
+ * @param[in] gScw 世界坐标系在验证帧下的Sim3
+ * @param[out] nNumProjMatches 最后匹配的数目
+ * @param[out] vpMPs 候选帧的窗口内所有的地图点
+ * @param[out] vpMatchedMPs 候选帧的窗口内被匹配到的地图点
+ * @return true 验证成功
+ * @return false 验证失败
+ */
 bool LoopClosing::DetectCommonRegionsFromLastKF(KeyFrame* pCurrentKF, KeyFrame* pMatchedKF, g2o::Sim3 &gScw, int &nNumProjMatches,
                                                 std::vector<MapPoint*> &vpMPs, std::vector<MapPoint*> &vpMatchedMPs)
 {
@@ -993,46 +1046,71 @@ bool LoopClosing::DetectCommonRegionsFromLastKF(KeyFrame* pCurrentKF, KeyFrame* 
 
     return false;
 }
-
+/**
+ * @brief 包装了searchByProjection, 把窗口内的所有地图点往当前关键帧上投影, 寻找匹配点
+ *
+ * @param[in] pCurrentKF 当前关键帧
+ * @param[in] pMatchedKFw 候选帧
+ * @param[in] g2oScw 世界坐标系在验证帧坐标系下的位姿
+ * @param[in] spMatchedMPinOrigin 没有用上?
+ * @param[in] vpMapPoints 候选帧及其共视关键帧组成的窗口里所有的地图点
+ * @param[in] vpMatchedMapPoints 候选帧及其共视关键帧组成的窗口里所有被匹配上的地图点
+ * @return int 匹配点的数量
+ */
 int LoopClosing::FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatchedKFw, g2o::Sim3 &g2oScw,
                                          set<MapPoint*> &spMatchedMPinOrigin, vector<MapPoint*> &vpMapPoints,
                                          vector<MapPoint*> &vpMatchedMapPoints)
 {
     int nNumCovisibles = 10;
+	// 取出候选关键帧的n个最优共视关键帧
     vector<KeyFrame*> vpCovKFm = pMatchedKFw->GetBestCovisibilityKeyFrames(nNumCovisibles);
     int nInitialCov = vpCovKFm.size();
+	// 将候选关键帧本身加入窗口
     vpCovKFm.push_back(pMatchedKFw);
+	// 辅助容器 防止重复添加
     set<KeyFrame*> spCheckKFs(vpCovKFm.begin(), vpCovKFm.end());
+	// 拿出当前关键帧的共视关键帧
     set<KeyFrame*> spCurrentCovisbles = pCurrentKF->GetConnectedKeyFrames();
+	// 窗口内关键帧数量不足 扩充
     if(nInitialCov < nNumCovisibles)
     {
         for(int i=0; i<nInitialCov; ++i)
         {
+			// 取出现有候选关键帧的最优共视关键帧
             vector<KeyFrame*> vpKFs = vpCovKFm[i]->GetBestCovisibilityKeyFrames(nNumCovisibles);
-            int nInserted = 0;
+            // 修改遍历判断条件
+			// int nInserted = 0;
+			int nInserted = nInitialCov;
             int j = 0;
+			// 遍历条件可能存在问题
             while(j < vpKFs.size() && nInserted < nNumCovisibles)
             {
+				// 未重复 添加到窗口
                 if(spCheckKFs.find(vpKFs[j]) == spCheckKFs.end() && spCurrentCovisbles.find(vpKFs[j]) == spCurrentCovisbles.end())
                 {
                     spCheckKFs.insert(vpKFs[j]);
                     ++nInserted;
+	                // 修改
+	                vpCovKFm.push_back(vpKFs[j]);
                 }
                 ++j;
             }
-            vpCovKFm.insert(vpCovKFm.end(), vpKFs.begin(), vpKFs.end());
+			// 可能导致重复添加
+            // vpCovKFm.insert(vpCovKFm.end(), vpKFs.begin(), vpKFs.end());
         }
     }
     set<MapPoint*> spMapPoints;
     vpMapPoints.clear();
     vpMatchedMapPoints.clear();
+	// 遍历窗口内每个关键帧
     for(KeyFrame* pKFi : vpCovKFm)
     {
+		// 遍历每个地图点
         for(MapPoint* pMPij : pKFi->GetMapPointMatches())
         {
             if(!pMPij || pMPij->isBad())
                 continue;
-
+			// 未重复 添加到窗口
             if(spMapPoints.find(pMPij) == spMapPoints.end())
             {
                 spMapPoints.insert(pMPij);
@@ -1045,6 +1123,7 @@ int LoopClosing::FindMatchesByProjection(KeyFrame* pCurrentKF, KeyFrame* pMatche
     ORBmatcher matcher(0.9, true);
 
     vpMatchedMapPoints.resize(pCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
+	// 把候选窗口中的地图点向当前关键帧投影 搜索匹配点(验证时用的搜索半径最小)
     int num_matches = matcher.SearchByProjection(pCurrentKF, mScw, vpMapPoints, vpMatchedMapPoints, 3, 1.5);
 
     return num_matches;

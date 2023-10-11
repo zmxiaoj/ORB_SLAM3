@@ -2243,7 +2243,18 @@ void Optimizer::OptimizeEssentialGraph(KeyFrame* pCurKF, vector<KeyFrame*> &vpFi
 
     }
 }
-
+/**
+ * @brief LoopClosing::DetectAndReffineSim3FromLastKF使用
+ * 1投2 2投1 只优化g2oS12
+ * @param pKF1         当前关键帧
+ * @param pKF2         候选关键帧
+ * @param vpMatches1   当前关键帧与地图匹配上的MP，中间会有NULL，与当前关键帧的特征点一一对应
+ * @param g2oS12       相似变换矩阵
+ * @param th2          误差上限的平方
+ * @param bFixScale    是否固定尺度，单目或者单目imu未做到3阶段初始化为false
+ * @param mAcumHessian 计算累计海森矩阵（没啥用）
+ * @param bAllPoints   是否计算所有点（都为true）
+ */
 int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &vpMatches1, g2o::Sim3 &g2oS12, const float th2,
                             const bool bFixScale, Eigen::Matrix<double,7,7> &mAcumHessian, const bool bAllPoints)
 {

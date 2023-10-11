@@ -458,7 +458,16 @@ namespace ORB_SLAM3
 
         return nmatches;
     }
-
+	/**
+	 * @brief 将候选地图点用sim3重投影到关键帧进行匹配搜索
+	 * @param[in] pKF
+	 * @param[in] Scw 世界系到当前帧的sim3
+	 * @param[in] vpPoints 全部地图点
+	 * @param[out] vpMatched 保存匹配到的地图点
+	 * @param[in] th 搜索半径(设置为最小情况)
+	 * @param[in] ratioHamming
+	 * @return 匹配点数目
+	 */
     int ORBmatcher::SearchByProjection(KeyFrame* pKF, Sophus::Sim3f &Scw, const vector<MapPoint*> &vpPoints,
                                        vector<MapPoint*> &vpMatched, int th, float ratioHamming)
     {
@@ -565,7 +574,18 @@ namespace ORB_SLAM3
 
         return nmatches;
     }
-
+	/**
+	 * @brief 使用重投影搜索匹配地图点 基于sim3实现，对t进行处理 t/s
+	 * @param pKF
+	 * @param Scw
+	 * @param vpPoints
+	 * @param vpPointsKFs
+	 * @param vpMatched
+	 * @param vpMatchedKF
+	 * @param th
+	 * @param ratioHamming
+	 * @return
+	 */
     int ORBmatcher::SearchByProjection(KeyFrame* pKF, Sophus::Sim3<float> &Scw, const std::vector<MapPoint*> &vpPoints, const std::vector<KeyFrame*> &vpPointsKFs,
                                        std::vector<MapPoint*> &vpMatched, std::vector<KeyFrame*> &vpMatchedKF, int th, float ratioHamming)
     {
