@@ -1464,7 +1464,16 @@ namespace ORB_SLAM3
 
         return nFused;
     }
-
+	/**
+	 * @brief 闭环矫正中使用 将当前关键帧闭环匹配上的当前关键帧组(关键帧及其共视关键帧组成)的地图点投影到当前关键帧，融合地图点
+	 *
+	 * @param[in] pKF                   当前关键帧
+	 * @param[in] Scw                   当前关键帧经过闭环Sim3 后的世界到相机坐标系的Sim变换
+	 * @param[in] vpPoints              与当前关键帧闭环匹配上的关键帧及其共视关键帧组成的地图点
+	 * @param[in] th                    搜索范围系数
+	 * @param[out] vpReplacePoint       替换的地图点
+	 * @return int                      融合(替换和新增)的地图点数目
+	 */
     int ORBmatcher::Fuse(KeyFrame *pKF, Sophus::Sim3f &Scw, const vector<MapPoint *> &vpPoints, float th, vector<MapPoint *> &vpReplacePoint)
     {
         // Get Calibration Parameters for later projection
@@ -1474,10 +1483,12 @@ namespace ORB_SLAM3
         const float &cy = pKF->cy;
 
         // Decompose Scw
+		// Sim3 -> SE3
         Sophus::SE3f Tcw = Sophus::SE3f(Scw.rotationMatrix(),Scw.translation()/Scw.scale());
         Eigen::Vector3f Ow = Tcw.inverse().translation();
 
         // Set of MapPoints already found in the KeyFrame
+		// 取出当前关键帧匹配地图点
         const set<MapPoint*> spAlreadyFound = pKF->GetMapPoints();
 
         int nFused=0;
@@ -1485,6 +1496,7 @@ namespace ORB_SLAM3
         const int nPoints = vpPoints.size();
 
         // For each candidate MapPoint project and match
+		// 遍历候选地图点
         for(int iMP=0; iMP<nPoints; iMP++)
         {
             MapPoint* pMP = vpPoints[iMP];
@@ -1497,6 +1509,7 @@ namespace ORB_SLAM3
             Eigen::Vector3f p3Dw = pMP->GetWorldPos();
 
             // Transform into Camera Coords.
+			// 将地图点转换到相机坐标系下
             Eigen::Vector3f p3Dc = Tcw * p3Dw;
 
             // Depth must be positive
@@ -1504,9 +1517,11 @@ namespace ORB_SLAM3
                 continue;
 
             // Project into Image
+			// 将地图点重投影到图像上
             const Eigen::Vector2f uv = pKF->mpCamera->project(p3Dc);
 
             // Point must be inside the image
+			// 重投影点是否在图像内
             if(!pKF->IsInImage(uv(0),uv(1)))
                 continue;
 
@@ -1515,33 +1530,37 @@ namespace ORB_SLAM3
             const float minDistance = pMP->GetMinDistanceInvariance();
             Eigen::Vector3f PO = p3Dw-Ow;
             const float dist3D = PO.norm();
-
+	        // 根据距离是否在图像合理金字塔尺度范围内
             if(dist3D<minDistance || dist3D>maxDistance)
                 continue;
 
             // Viewing angle must be less than 60 deg
+			// 观测角度是否小于60度
             Eigen::Vector3f Pn = pMP->GetNormal();
 
             if(PO.dot(Pn)<0.5*dist3D)
                 continue;
 
             // Compute predicted scale level
+			// 预测重投影金字塔层
             const int nPredictedLevel = pMP->PredictScale(dist3D,pKF);
 
             // Search in a radius
+			// 确定搜索半径
             const float radius = th*pKF->mvScaleFactors[nPredictedLevel];
-
+			// 取出区域内特征点
             const vector<size_t> vIndices = pKF->GetFeaturesInArea(uv(0),uv(1),radius);
 
             if(vIndices.empty())
                 continue;
 
             // Match to the most similar keypoint in the radius
-
+			// 匹配到搜索半径内最相似的特征点(未使用次佳距离系数验证)
             const cv::Mat dMP = pMP->GetDescriptor();
 
             int bestDist = INT_MAX;
             int bestIdx = -1;
+			// 遍历候选特征点
             for(vector<size_t>::const_iterator vit=vIndices.begin(); vit!=vIndices.end(); vit++)
             {
                 const size_t idx = *vit;
@@ -1549,11 +1568,11 @@ namespace ORB_SLAM3
 
                 if(kpLevel<nPredictedLevel-1 || kpLevel>nPredictedLevel)
                     continue;
-
+				// 取出特征点描述子
                 const cv::Mat &dKF = pKF->mDescriptors.row(idx);
-
+				// 计算描述子距离
                 int dist = DescriptorDistance(dMP,dKF);
-
+				// 更新最佳距离和索引
                 if(dist<bestDist)
                 {
                     bestDist = dist;
@@ -1562,14 +1581,17 @@ namespace ORB_SLAM3
             }
 
             // If there is already a MapPoint replace otherwise add new measurement
+			// 最佳距离小于阈值
             if(bestDist<=TH_LOW)
             {
                 MapPoint* pMPinKF = pKF->GetMapPoint(bestIdx);
-                if(pMPinKF)
+                // 已存在地图点 记录要替换信息 待对地图点加锁后再替换否则可能crash
+				if(pMPinKF)
                 {
                     if(!pMPinKF->isBad())
                         vpReplacePoint[iMP] = pMPinKF;
                 }
+				// 不存在地图点 直接添加
                 else
                 {
                     pMP->AddObservation(pKF,bestIdx);

@@ -1629,13 +1629,24 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     pMap->IncreaseChangeIndex();
 }
 
-
+/**
+ * @brief  LoopClosing::CorrectLoop() 回环矫正时使用，纯视觉，全局本质图优化
+ * 优化目标： 地图中所有关键帧位姿 根据关键帧优化结果调整地图点
+ * @param pMap                当前的map
+ * @param pLoopKF             mpLoopMatchedKF 与mpCurrentKF匹配的关键帧
+ * @param pCurKF              mpCurrentKF 当前关键帧
+ * @param NonCorrectedSim3    通过pKFi->GetPose()计算的放NonCorrectedSim3也就是回环前的位姿 这里面的帧只是与mpCurrentKF相关联的
+ * @param CorrectedSim3       通过mg2oLoopScw计算的放CorrectedSim3 这里面的帧只是与mpCurrentKF相关联的
+ * @param LoopConnections     因为回环而建立的新的帧与帧的连接关系 key为pCurKF共视帧 value为共视帧的共视帧
+ * @param bFixScale           单目imu且未到第三次imu初始化为false
+ */
 void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* pCurKF,
                                        const LoopClosing::KeyFrameAndPose &NonCorrectedSim3,
                                        const LoopClosing::KeyFrameAndPose &CorrectedSim3,
                                        const map<KeyFrame *, set<KeyFrame *> > &LoopConnections, const bool &bFixScale)
 {   
     // Setup optimizer
+	// 构造优化器
     g2o::SparseOptimizer optimizer;
     optimizer.setVerbose(false);
     g2o::BlockSolver_7_3::LinearSolverType * linearSolver =
@@ -1662,6 +1673,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
     const int minFeat = 100;
 
     // Set KeyFrame vertices
+	// 将地图中关键帧位姿作为顶点添加
     for(size_t i=0, iend=vpKFs.size(); i<iend;i++)
     {
         KeyFrame* pKF = vpKFs[i];
@@ -1672,12 +1684,13 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         const int nIDi = pKF->mnId;
 
         LoopClosing::KeyFrameAndPose::const_iterator it = CorrectedSim3.find(pKF);
-
+	    // 如果该关键帧在闭环时通过Sim3传播调整过，优先用调整后的Sim3位姿
         if(it!=CorrectedSim3.end())
         {
             vScw[nIDi] = it->second;
             VSim3->setEstimate(it->second);
         }
+        // 如果该关键帧在闭环时没有通过Sim3传播调整过，用跟踪时的位姿
         else
         {
             Sophus::SE3d Tcw = pKF->GetPose().cast<double>();
@@ -1685,12 +1698,13 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
             vScw[nIDi] = Siw;
             VSim3->setEstimate(Siw);
         }
-
+	    // 固定第一帧
         if(pKF->mnId==pMap->GetInitKFid())
             VSim3->setFixed(true);
 
         VSim3->setId(nIDi);
         VSim3->setMarginalized(false);
+		// Mono不固定尺度 Stereo/RGBD 固定尺度
         VSim3->_fix_scale = bFixScale;
 
         optimizer.addVertex(VSim3);
@@ -1699,30 +1713,33 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         vpVertices[nIDi]=VSim3;
     }
 
-
-    set<pair<long unsigned int,long unsigned int> > sInsertedEdges;
+	// 保存由于闭环后优化sim3而出现的新的关键帧和关键帧之间的连接关系,因为回环而新建立的连接关系，其中id比较小的关键帧在前,id比较大的关键帧在后
+	set<pair<long unsigned int,long unsigned int> > sInsertedEdges;
 
     const Eigen::Matrix<double,7,7> matLambda = Eigen::Matrix<double,7,7>::Identity();
 
     // Set Loop edges
     int count_loop = 0;
+	// 遍历由于闭环地图点调整产生的共视连接
     for(map<KeyFrame *, set<KeyFrame *> >::const_iterator mit = LoopConnections.begin(), mend=LoopConnections.end(); mit!=mend; mit++)
     {
+		// 取出关键帧及其共视关键帧
         KeyFrame* pKF = mit->first;
         const long unsigned int nIDi = pKF->mnId;
         const set<KeyFrame*> &spConnections = mit->second;
         const g2o::Sim3 Siw = vScw[nIDi];
         const g2o::Sim3 Swi = Siw.inverse();
-
+		// 遍历当前关键帧的共视关键帧
         for(set<KeyFrame*>::const_iterator sit=spConnections.begin(), send=spConnections.end(); sit!=send; sit++)
         {
             const long unsigned int nIDj = (*sit)->mnId;
+			// 存在pCurKF或pLoopKF 或 与当前关键帧共视程度>=100 添加到本质图进行优化
             if((nIDi!=pCurKF->mnId || nIDj!=pLoopKF->mnId) && pKF->GetWeight(*sit)<minFeat)
                 continue;
 
             const g2o::Sim3 Sjw = vScw[nIDj];
             const g2o::Sim3 Sji = Sjw * Swi;
-
+			// 添加当前关键帧与其共视关键帧的边约束
             g2o::EdgeSim3* e = new g2o::EdgeSim3();
             e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nIDj)));
             e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex*>(optimizer.vertex(nIDi)));
@@ -1732,11 +1749,13 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
 
             optimizer.addEdge(e);
             count_loop++;
+	        // 保证id小的在前,大的在后
             sInsertedEdges.insert(make_pair(min(nIDi,nIDj),max(nIDi,nIDj)));
         }
     }
 
     // Set normal edges
+	// 遍历全部关键帧 添加跟踪时形成的边、闭环匹配成功形成的边
     for(size_t i=0, iend=vpKFs.size(); i<iend; i++)
     {
         KeyFrame* pKF = vpKFs[i];
@@ -1746,7 +1765,8 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         g2o::Sim3 Swi;
 
         LoopClosing::KeyFrameAndPose::const_iterator iti = NonCorrectedSim3.find(pKF);
-
+	    // 找到为关键帧的共视帧，没找到表示非共视帧，非共视帧vScw[nIDi]里保存矫正前的
+	    // Swi均是校正前的
         if(iti!=NonCorrectedSim3.end())
             Swi = (iti->second).inverse();
         else
@@ -1755,6 +1775,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         KeyFrame* pParentKF = pKF->GetParent();
 
         // Spanning tree edge
+		// 有父关键帧 添加扩展树的边
         if(pParentKF)
         {
             int nIDj = pParentKF->mnId;
@@ -1779,6 +1800,8 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         }
 
         // Loop edges
+	    // 添加在CorrectLoop函数中AddLoopEdge函数添加的闭环连接边(当前帧与闭环匹配帧之间的连接关系)
+	    // 使用经过Sim3调整前关键帧之间的相对关系作为边
         const set<KeyFrame*> sLoopEdges = pKF->GetLoopEdges();
         for(set<KeyFrame*>::const_iterator sit=sLoopEdges.begin(), send=sLoopEdges.end(); sit!=send; sit++)
         {
@@ -1805,6 +1828,8 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         }
 
         // Covisibility graph edges
+	    // 对有很好共视关系的关键帧也作为边进行优化
+	    // 使用经过Sim3调整前关键帧之间的相对关系作为边
         const vector<KeyFrame*> vpConnectedKFs = pKF->GetCovisiblesByWeight(minFeat);
         for(vector<KeyFrame*>::const_iterator vit=vpConnectedKFs.begin(); vit!=vpConnectedKFs.end(); vit++)
         {
@@ -1838,6 +1863,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         }
 
         // Inertial edges if inertial
+		// IMU
         if(pKF->bImu && pKF->mPrevKF)
         {
             g2o::Sim3 Spw;
@@ -1857,7 +1883,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
         }
     }
 
-
+	// 开始优化
     optimizer.initializeOptimization();
     optimizer.computeActiveErrors();
     optimizer.optimize(20);
@@ -1865,6 +1891,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
     unique_lock<mutex> lock(pMap->mMutexMapUpdate);
 
     // SE3 Pose Recovering. Sim3:[sR t;0 1] -> SE3:[R t/s;0 1]
+	// 遍历全部关键帧 恢复位姿
     for(size_t i=0;i<vpKFs.size();i++)
     {
         KeyFrame* pKFi = vpKFs[i];
@@ -1881,7 +1908,9 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
     }
 
     // Correct points. Transform to "non-optimized" reference keyframe pose and transform back with optimized pose
-    for(size_t i=0, iend=vpMPs.size(); i<iend; i++)
+    // 调整地图点 变换到未优化参考关键帧坐标 变换回优化位姿
+	// 遍历地图点
+	for(size_t i=0, iend=vpMPs.size(); i<iend; i++)
     {
         MapPoint* pMP = vpMPs[i];
 
@@ -1889,6 +1918,7 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
             continue;
 
         int nIDr;
+		// 地图点被sim3调整过 CorrectLoop
         if(pMP->mnCorrectedByKF==pCurKF->mnId)
         {
             nIDr = pMP->mnCorrectedReference;
@@ -1902,8 +1932,9 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
 
         g2o::Sim3 Srw = vScw[nIDr];
         g2o::Sim3 correctedSwr = vCorrectedSwc[nIDr];
-
+		// 取出地图点世界系下坐标
         Eigen::Matrix<double,3,1> eigP3Dw = pMP->GetWorldPos().cast<double>();
+		// 世界系下地图点 -未优化sim3-> 参考关键帧系下地图点 -优化sim3-> 世界系下地图点
         Eigen::Matrix<double,3,1> eigCorrectedP3Dw = correctedSwr.map(Srw.map(eigP3Dw));
         pMP->SetWorldPos(eigCorrectedP3Dw.cast<float>());
 
@@ -1913,7 +1944,15 @@ void Optimizer::OptimizeEssentialGraph(Map* pMap, KeyFrame* pLoopKF, KeyFrame* p
     // TODO Check this changeindex
     pMap->IncreaseChangeIndex();
 }
-
+/**
+ * @brief  LoopClosing::MergeLocal() 融合地图时使用，优化当前帧没有参与融合的元素，本质图优化
+ * 优化目标： 1. vpNonFixedKFs; 2.vpNonCorrectedMPs
+ * @param pCurKF                 mpCurrentKF 融合时当前关键帧
+ * @param vpFixedKFs             vpMergeConnectedKFs 融合地图中的关键帧，也就是上面函数中的 vpFixedKF
+ * @param vpFixedCorrectedKFs    vpLocalCurrentWindowKFs 当前地图中经过矫正的关键帧，也就是Optimizer::LocalBundleAdjustment中优化过的vpAdjustKF
+ * @param vpNonFixedKFs          vpCurrentMapKFs 当前地图中剩余的关键帧，待优化
+ * @param vpNonCorrectedMPs      vpCurrentMapMPs 当前地图中剩余的MP点，待优化
+ */
 void Optimizer::OptimizeEssentialGraph(KeyFrame* pCurKF, vector<KeyFrame*> &vpFixedKFs, vector<KeyFrame*> &vpFixedCorrectedKFs,
                                        vector<KeyFrame*> &vpNonFixedKFs, vector<MapPoint*> &vpNonCorrectedMPs)
 {
