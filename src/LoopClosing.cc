@@ -2582,22 +2582,25 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
                 Sophus::SE3f Twc = pKF->GetPoseInverse();
                 //cout << "Twc: " << Twc << endl;
                 //cout << "GBA: Correct KeyFrames" << endl;
+				// BFS广度优先搜索
                 for(set<KeyFrame*>::const_iterator sit=sChilds.begin();sit!=sChilds.end();sit++)
                 {
                     KeyFrame* pChild = *sit;
                     if(!pChild || pChild->isBad())
                         continue;
-
+	                // 专门处理没有参与优化的新关键帧
                     if(pChild->mnBAGlobalForKF!=nLoopKF)
                     {
                         //cout << "++++New child with flag " << pChild->mnBAGlobalForKF << "; LoopKF: " << nLoopKF << endl;
                         //cout << " child id: " << pChild->mnId << endl;
+						// 世界系下坐标 -未优化位姿-> 当前帧坐标系下 -全局BA优化位姿-> 世界系下坐标
                         Sophus::SE3f Tchildc = pChild->GetPose() * Twc;
                         //cout << "Child pose: " << Tchildc << endl;
                         //cout << "pKF->mTcwGBA: " << pKF->mTcwGBA << endl;
                         pChild->mTcwGBA = Tchildc * pKF->mTcwGBA;//*Tcorc*pKF->mTcwGBA;
-
+						// 优化前后旋转R变换
                         Sophus::SO3f Rcor = pChild->mTcwGBA.so3().inverse() * pChild->GetPose().so3();
+						// 仅IMU 更新速度 R*t
                         if(pChild->isVelocitySet()){
                             pChild->mVwbGBA = Rcor * pChild->GetVelocity();
                         }
@@ -2608,7 +2611,7 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
                         //cout << "Child bias: " << pChild->GetImuBias() << endl;
                         pChild->mBiasGBA = pChild->GetImuBias();
 
-
+						// 标记为已更新
                         pChild->mnBAGlobalForKF = nLoopKF;
 
                     }
@@ -2672,7 +2675,7 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
                     cv::imwrite(namefile, imLeft);
                 }*/
 
-
+				// IMU
                 if(pKF->bImu)
                 {
                     //cout << "-------Update inertial values" << endl;
@@ -2684,31 +2687,34 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
                     pKF->SetVelocity(pKF->mVwbGBA);
                     pKF->SetNewBias(pKF->mBiasGBA);                    
                 }
-
+				// 从队列中删除关键帧
                 lpKFtoCheck.pop_front();
             }
 
             //cout << "GBA: Correct MapPoints" << endl;
             // Correct MapPoints
-            const vector<MapPoint*> vpMPs = pActiveMap->GetAllMapPoints();
 			// 更新地图点
+            const vector<MapPoint*> vpMPs = pActiveMap->GetAllMapPoints();
+			// 遍历全部地图点
             for(size_t i=0; i<vpMPs.size(); i++)
             {
                 MapPoint* pMP = vpMPs[i];
 
                 if(pMP->isBad())
                     continue;
-
+				// 参与了全局BA
                 if(pMP->mnBAGlobalForKF==nLoopKF)
                 {
                     // If optimized by Global BA, just update
+					// 直接更新坐标
                     pMP->SetWorldPos(pMP->mPosGBA);
                 }
                 else
                 {
                     // Update according to the correction of its reference keyframe
+					// 获取参考关键帧
                     KeyFrame* pRefKF = pMP->GetReferenceKeyFrame();
-
+					// 参考关键帧未参与全局BA 跳过
                     if(pRefKF->mnBAGlobalForKF!=nLoopKF)
                         continue;
 
@@ -2718,6 +2724,7 @@ void LoopClosing::RunGlobalBundleAdjustment(Map* pActiveMap, unsigned long nLoop
                     // Map to non-corrected camera
                     // cv::Mat Rcw = pRefKF->mTcwBefGBA.rowRange(0,3).colRange(0,3);
                     // cv::Mat tcw = pRefKF->mTcwBefGBA.rowRange(0,3).col(3);
+					// 世界系下地图点坐标 -未全局BA优化变换-> 参考关键帧下 -全局BA优化变换-> 世界系下地图点坐标
                     Eigen::Vector3f Xc = pRefKF->mTcwBefGBA * pMP->GetWorldPos();
 
                     // Backproject using corrected camera

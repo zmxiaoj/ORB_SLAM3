@@ -349,8 +349,8 @@ public:
 
 
     // Variables used by loop closing
-    Sophus::SE3f mTcwGBA;
-    Sophus::SE3f mTcwBefGBA;
+    Sophus::SE3f mTcwGBA;    // 全局BA优化后变换
+    Sophus::SE3f mTcwBefGBA; // 未优化变换
     Eigen::Vector3f mVwbGBA;
     Eigen::Vector3f mVwbBefGBA;
     IMU::Bias mBiasGBA;
